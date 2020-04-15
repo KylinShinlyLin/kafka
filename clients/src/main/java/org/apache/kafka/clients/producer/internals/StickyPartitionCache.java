@@ -44,25 +44,32 @@ public class StickyPartitionCache {
     }
 
     public int nextPartition(String topic, Cluster cluster, int prevPartition) {
+        //获取总分区数量
         List<PartitionInfo> partitions = cluster.partitionsForTopic(topic);
+        //获取上一次发送的分区
         Integer oldPart = indexCache.get(topic);
         Integer newPart = oldPart;
         // Check that the current sticky partition for the topic is either not set or that the partition that 
         // triggered the new batch matches the sticky partition that needs to be changed.
         if (oldPart == null || oldPart == prevPartition) {
+            //获取可用分区
             List<PartitionInfo> availablePartitions = cluster.availablePartitionsForTopic(topic);
+            //如果没有可用分区也强行发送
             if (availablePartitions.size() < 1) {
                 Integer random = Utils.toPositive(ThreadLocalRandom.current().nextInt());
                 newPart = random % partitions.size();
+                //可用分区只有一个，就发送到这个分区
             } else if (availablePartitions.size() == 1) {
                 newPart = availablePartitions.get(0).partition();
             } else {
+                //可用分区有多个，选择一个与上次不一样的分区
                 while (newPart == null || newPart.equals(oldPart)) {
                     Integer random = Utils.toPositive(ThreadLocalRandom.current().nextInt());
                     newPart = availablePartitions.get(random % availablePartitions.size()).partition();
                 }
             }
             // Only change the sticky partition if it is null or prevPartition matches the current sticky partition.
+            //缓存本次分区
             if (oldPart == null) {
                 indexCache.putIfAbsent(topic, newPart);
             } else {

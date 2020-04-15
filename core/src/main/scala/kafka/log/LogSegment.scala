@@ -133,10 +133,10 @@ class LogSegment private[log] (val log: FileRecords,
    *
    * It is assumed this method is being called from within a lock.
    *
-   * @param largestOffset The last offset in the message set
-   * @param largestTimestamp The largest timestamp in the message set.
-   * @param shallowOffsetOfMaxTimestamp The offset of the message that has the largest timestamp in the messages to append.
-   * @param records The log entries to append.
+   * @param largestOffset The last offset in the message set 最大位移值
+   * @param largestTimestamp The largest timestamp in the message set. 最大时间戳
+   * @param shallowOffsetOfMaxTimestamp The offset of the message that has the largest timestamp in the messages to append. 最大时间戳对应消息的位移
+   * @param records The log entries to append. 真正要写入的消息集合
    * @return the physical position in the file of the appended records
    * @throws LogSegmentOffsetOverflowException if the largest offset causes index offset overflow
    */
