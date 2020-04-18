@@ -151,19 +151,22 @@ class LogSegment private[log] (val log: FileRecords,
       val physicalPosition = log.sizeInBytes()
       if (physicalPosition == 0)
         rollingBasedTimestamp = Some(largestTimestamp)
-
+      //确保输入参数最大位移值是合法 标准就是看它与日志段起始位移的差值是否在整数范围内
       ensureOffsetInRange(largestOffset)
 
-      // append the messages
+      // append the messages FileRecords 的 append 方法执行真正的写入 将内存中的消息对象写入到操作系统的页缓存
       val appendedBytes = log.append(records)
       trace(s"Appended $appendedBytes to ${log.file} at end offset $largestOffset")
       // Update the in memory max timestamp and corresponding offset.
+      //更新日志段的最大时间戳以及最大时间戳所属消息的位移值属性
       if (largestTimestamp > maxTimestampSoFar) {
         maxTimestampSoFar = largestTimestamp
         offsetOfMaxTimestampSoFar = shallowOffsetOfMaxTimestamp
       }
       // append an entry to the index (if needed)
+      // 更新索引项和写入的字节数
       if (bytesSinceLastIndexEntry > indexIntervalBytes) {
+        //日志段每写入 4KB 数据就要写入一个索引项。当已写入字节数超过了 4KB 之后，append 方法会调用索引对象的 append 方法新增索引项，同时清空已写入字节数，以备下次重新累积计算
         offsetIndex.append(largestOffset, physicalPosition)
         timeIndex.maybeAppend(maxTimestampSoFar, offsetOfMaxTimestampSoFar)
         bytesSinceLastIndexEntry = 0
@@ -279,11 +282,13 @@ class LogSegment private[log] (val log: FileRecords,
    * Read a message set from this segment beginning with the first offset >= startOffset. The message set will include
    * no more than maxSize bytes and will end before maxOffset if a maxOffset is specified.
    *
-   * @param startOffset A lower bound on the first offset to include in the message set we read
-   * @param maxSize The maximum number of bytes to include in the message set we read
-   * @param maxPosition The maximum position in the log segment that should be exposed for read
-   * @param minOneMessage If this is true, the first message will be returned even if it exceeds `maxSize` (if one exists)
-   *
+   * @param startOffset 要读取的第一条消息的位移 A lower bound on the first offset to include in the message set we read
+   * @param maxSize 能读取的最大字节数 The maximum number of bytes to include in the message set we read
+   * @param maxPosition 能读到的最大文件位置 The maximum position in the log segment that should be exposed for read
+   * @param minOneMessage 是否允许在消息体过大时至少返回第一条消息 If this is true, the first message will be returned even if it exceeds `maxSize` (if one exists)
+    *
+   * minOneMessage 当这个参数为 true 时，即使出现消息体字节数超过了 maxSize 的情形，read 方法依然能返回至少一条消息
+    *
    * @return The fetched data and the offset metadata of the first message whose offset is >= startOffset,
    *         or null if the startOffset is larger than the largest offset in this log
    */
@@ -294,7 +299,7 @@ class LogSegment private[log] (val log: FileRecords,
            minOneMessage: Boolean = false): FetchDataInfo = {
     if (maxSize < 0)
       throw new IllegalArgumentException(s"Invalid max size $maxSize for log read from segment $log")
-
+    //方法定位要读取的起始文件位置 （startPosition）。输入参数 startOffset 仅仅是位移值，Kafka 需要根据索引信息找到对应的物理文件位置才能开始读取消息
     val startOffsetAndSize = translateOffset(startOffset)
 
     // if the start position is already off the end of the log, return null
@@ -304,6 +309,12 @@ class LogSegment private[log] (val log: FileRecords,
     val startPosition = startOffsetAndSize.position
     val offsetMetadata = LogOffsetMetadata(startOffset, this.baseOffset, startPosition)
 
+    /**
+      * 待确定了读取起始位置，日志段代码需要根据这部分信息以及 maxSize 和 maxPosition
+      * 参数共同计算要读取的总字节数。举个例子，假设 maxSize=100，maxPosition=300，startPosition=250，
+      * 那么 read 方法只能读取 50 字节，因为 maxPosition - startPosition = 50。
+      * 我们把它和 maxSize 参数相比较，其中的最小值就是最终能够读取的总字节数
+      */
     val adjustedMaxSize =
       if (minOneMessage) math.max(maxSize, startOffsetAndSize.size)
       else maxSize
@@ -323,6 +334,7 @@ class LogSegment private[log] (val log: FileRecords,
      offsetIndex.fetchUpperBoundOffset(startOffsetPosition, fetchSize).map(_.offset)
 
   /**
+    *  Broker 在启动时会从磁盘上加载所有日志段信息到内存中，并创建相应的 LogSegment 对象实例
    * Run recovery on the given segment. This will rebuild the index from the log file and lop off any invalid bytes
    * from the end of the log and index.
    *
@@ -334,6 +346,7 @@ class LogSegment private[log] (val log: FileRecords,
    */
   @nonthreadsafe
   def recover(producerStateManager: ProducerStateManager, leaderEpochCache: Option[LeaderEpochFileCache] = None): Int = {
+    //recover 开始时，代码依次调用索引对象的 reset 方法清空所有的索引文件
     offsetIndex.reset()
     timeIndex.reset()
     txnIndex.reset()
@@ -341,7 +354,13 @@ class LogSegment private[log] (val log: FileRecords,
     var lastIndexEntry = 0
     maxTimestampSoFar = RecordBatch.NO_TIMESTAMP
     try {
+      //开始遍历日志段中的所有消息集合或消息批次（RecordBatch）
       for (batch <- log.batches.asScala) {
+        /**
+          * 对于读取到的每个消息集合，日志段必须要确保它们是合法的，这主要体现在两个方面：
+          * 1、该集合中的消息必须要符合 Kafka 定义的二进制格式；
+          * 2、该集合中最后一条消息的位移值不能越界，即它与日志段起始位移的差值必须是一个正整数值。
+          */
         batch.ensureValid()
         ensureOffsetInRange(batch.lastOffset)
 
@@ -357,9 +376,11 @@ class LogSegment private[log] (val log: FileRecords,
           timeIndex.maybeAppend(maxTimestampSoFar, offsetOfMaxTimestampSoFar)
           lastIndexEntry = validBytes
         }
+        //不断累加当前已读取的消息字节数，并根据该值有条件地写入索引项
         validBytes += batch.sizeInBytes()
 
         if (batch.magic >= RecordBatch.MAGIC_VALUE_V2) {
+          //更新事务型 Producer 的状态以及 Leader Epoch 缓存
           leaderEpochCache.foreach { cache =>
             if (batch.partitionLeaderEpoch > 0 && cache.latestEpoch.forall(batch.partitionLeaderEpoch > _))
               cache.assign(batch.partitionLeaderEpoch, batch.baseOffset)
@@ -376,6 +397,12 @@ class LogSegment private[log] (val log: FileRecords,
     if (truncated > 0)
       debug(s"Truncated $truncated invalid bytes at the end of segment ${log.file.getAbsoluteFile} during recovery")
 
+    /**
+      * 遍历执行完成后，Kafka 会将日志段当前总字节数和刚刚累加的已读取字节数进行比较，
+      * 如果发现前者比后者大，说明日志段写入了一些非法消息，需要执行截断操作，
+      * 将日志段大小调整回合法的数值。同时， Kafka 还必须相应地调整索引文件的大小。
+      * 把这些都做完之后，日志段恢复的操作也就宣告结束了。
+      */
     log.truncateTo(validBytes)
     offsetIndex.trimToValidSize()
     // A normally closed segment always appends the biggest timestamp ever seen into log segment, we do this as well.
