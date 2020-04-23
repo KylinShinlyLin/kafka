@@ -1,19 +1,20 @@
 /**
- * Licensed to the Apache Software Foundation (ASF) under one or more
- * contributor license agreements.  See the NOTICE file distributed with
- * this work for additional information regarding copyright ownership.
- * The ASF licenses this file to You under the Apache License, Version 2.0
- * (the "License"); you may not use this file except in compliance with
- * the License.  You may obtain a copy of the License at
- *
- *    http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- */
+  * Licensed to the Apache Software Foundation (ASF) under one or more
+  * contributor license agreements.  See the NOTICE file distributed with
+  * this work for additional information regarding copyright ownership.
+  * The ASF licenses this file to You under the Apache License, Version 2.0
+  * (the "License"); you may not use this file except in compliance with
+  * the License.  You may obtain a copy of the License at
+  *
+  * http://www.apache.org/licenses/LICENSE-2.0
+  *
+  * Unless required by applicable law or agreed to in writing, software
+  * distributed under the License is distributed on an "AS IS" BASIS,
+  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+  * See the License for the specific language governing permissions and
+  * limitations under the License.
+  * TODO Log 对象中的 LEO 永远指向下一条待插入消息，也就是说，LEO 值上面是没有消息的！
+  */
 
 package kafka.log
 
@@ -31,9 +32,9 @@ import kafka.api.{ApiVersion, KAFKA_0_10_0_IV0}
 import kafka.common.{LogSegmentOffsetOverflowException, LongRef, OffsetsOutOfOrderException, UnexpectedAppendOffsetException}
 import kafka.message.{BrokerCompressionCodec, CompressionCodec, NoCompressionCodec}
 import kafka.metrics.KafkaMetricsGroup
+import kafka.server._
 import kafka.server.checkpoints.LeaderEpochCheckpointFile
 import kafka.server.epoch.LeaderEpochFileCache
-import kafka.server.{BrokerTopicStats, FetchDataInfo, FetchHighWatermark, FetchIsolation, FetchLogEnd, FetchTxnCommitted, LogDirFailureChannel, LogOffsetMetadata, OffsetAndEpoch}
 import kafka.utils._
 import org.apache.kafka.common.errors._
 import org.apache.kafka.common.record.FileRecords.TimestampAndOffset
@@ -58,10 +59,10 @@ object LogAppendInfo {
       offsetsMonotonic = false, -1L)
 
   /**
-   * In ProduceResponse V8+, we add two new fields record_errors and error_message (see KIP-467).
-   * For any record failures with InvalidTimestamp or InvalidRecordException, we construct a LogAppendInfo object like the one
-   * in unknownLogAppendInfoWithLogStartOffset, but with additiona fields recordErrors and errorMessage
-   */
+    * In ProduceResponse V8+, we add two new fields record_errors and error_message (see KIP-467).
+    * For any record failures with InvalidTimestamp or InvalidRecordException, we construct a LogAppendInfo object like the one
+    * in unknownLogAppendInfoWithLogStartOffset, but with additiona fields recordErrors and errorMessage
+    */
   def unknownLogAppendInfoWithAdditionalInfo(logStartOffset: Long, recordErrors: Seq[RecordError], errorMessage: String): LogAppendInfo =
     LogAppendInfo(None, -1, RecordBatch.NO_TIMESTAMP, -1L, RecordBatch.NO_TIMESTAMP, logStartOffset,
       RecordConversionStats.EMPTY, NoCompressionCodec, NoCompressionCodec, -1, -1,
@@ -69,23 +70,23 @@ object LogAppendInfo {
 }
 
 /**
- * Struct to hold various quantities we compute about each message set before appending to the log
- *
- * @param firstOffset The first offset in the message set unless the message format is less than V2 and we are appending
- *                    to the follower.
- * @param lastOffset The last offset in the message set
- * @param maxTimestamp The maximum timestamp of the message set.
- * @param offsetOfMaxTimestamp The offset of the message with the maximum timestamp.
- * @param logAppendTime The log append time (if used) of the message set, otherwise Message.NoTimestamp
- * @param logStartOffset The start offset of the log at the time of this append.
- * @param recordConversionStats Statistics collected during record processing, `null` if `assignOffsets` is `false`
- * @param sourceCodec The source codec used in the message set (send by the producer)
- * @param targetCodec The target codec of the message set(after applying the broker compression configuration if any)
- * @param shallowCount The number of shallow messages
- * @param validBytes The number of valid bytes
- * @param offsetsMonotonic Are the offsets in this message set monotonically increasing
- * @param lastOffsetOfFirstBatch The last offset of the first batch
- */
+  * Struct to hold various quantities we compute about each message set before appending to the log
+  *
+  * @param firstOffset            The first offset in the message set unless the message format is less than V2 and we are appending
+  *                               to the follower.
+  * @param lastOffset             The last offset in the message set
+  * @param maxTimestamp           The maximum timestamp of the message set.
+  * @param offsetOfMaxTimestamp   The offset of the message with the maximum timestamp.
+  * @param logAppendTime          The log append time (if used) of the message set, otherwise Message.NoTimestamp
+  * @param logStartOffset         The start offset of the log at the time of this append.
+  * @param recordConversionStats  Statistics collected during record processing, `null` if `assignOffsets` is `false`
+  * @param sourceCodec            The source codec used in the message set (send by the producer)
+  * @param targetCodec            The target codec of the message set(after applying the broker compression configuration if any)
+  * @param shallowCount           The number of shallow messages
+  * @param validBytes             The number of valid bytes
+  * @param offsetsMonotonic       Are the offsets in this message set monotonically increasing
+  * @param lastOffsetOfFirstBatch The last offset of the first batch
+  */
 case class LogAppendInfo(var firstOffset: Option[Long],
                          var lastOffset: Long,
                          var maxTimestamp: Long,
@@ -102,17 +103,18 @@ case class LogAppendInfo(var firstOffset: Option[Long],
                          recordErrors: Seq[RecordError] = List(),
                          errorMessage: String = null) {
   /**
-   * Get the first offset if it exists, else get the last offset of the first batch
-   * For magic versions 2 and newer, this method will return first offset. For magic versions
-   * older than 2, we use the last offset of the first batch as an approximation of the first
-   * offset to avoid decompressing the data.
-   */
+    * Get the first offset if it exists, else get the last offset of the first batch
+    * For magic versions 2 and newer, this method will return first offset. For magic versions
+    * older than 2, we use the last offset of the first batch as an approximation of the first
+    * offset to avoid decompressing the data.
+    */
   def firstOrLastOffsetOfFirstBatch: Long = firstOffset.getOrElse(lastOffsetOfFirstBatch)
 
   /**
-   * Get the (maximum) number of messages described by LogAppendInfo
-   * @return Maximum possible number of messages described by LogAppendInfo
-   */
+    * Get the (maximum) number of messages described by LogAppendInfo
+    *
+    * @return Maximum possible number of messages described by LogAppendInfo
+    */
   def numMessages: Long = {
     firstOffset match {
       case Some(firstOffsetVal) if (firstOffsetVal >= 0 && lastOffset >= 0) => (lastOffset - firstOffsetVal + 1)
@@ -122,18 +124,18 @@ case class LogAppendInfo(var firstOffset: Option[Long],
 }
 
 /**
- * Container class which represents a snapshot of the significant offsets for a partition. This allows fetching
- * of these offsets atomically without the possibility of a leader change affecting their consistency relative
- * to each other. See [[kafka.cluster.Partition.fetchOffsetSnapshot()]].
- */
+  * Container class which represents a snapshot of the significant offsets for a partition. This allows fetching
+  * of these offsets atomically without the possibility of a leader change affecting their consistency relative
+  * to each other. See [[kafka.cluster.Partition.fetchOffsetSnapshot()]].
+  */
 case class LogOffsetSnapshot(logStartOffset: Long,
                              logEndOffset: LogOffsetMetadata,
                              highWatermark: LogOffsetMetadata,
                              lastStableOffset: LogOffsetMetadata)
 
 /**
- * Another container which is used for lower level reads using  [[kafka.cluster.Partition.readRecords()]].
- */
+  * Another container which is used for lower level reads using  [[kafka.cluster.Partition.readRecords()]].
+  */
 case class LogReadInfo(fetchedData: FetchDataInfo,
                        highWatermark: Long,
                        logStartOffset: Long,
@@ -141,15 +143,15 @@ case class LogReadInfo(fetchedData: FetchDataInfo,
                        lastStableOffset: Long)
 
 /**
- * A class used to hold useful metadata about a completed transaction. This is used to build
- * the transaction index after appending to the log.
- *
- * @param producerId The ID of the producer
- * @param firstOffset The first offset (inclusive) of the transaction
- * @param lastOffset The last offset (inclusive) of the transaction. This is always the offset of the
- *                   COMMIT/ABORT control record which indicates the transaction's completion.
- * @param isAborted Whether or not the transaction was aborted
- */
+  * A class used to hold useful metadata about a completed transaction. This is used to build
+  * the transaction index after appending to the log.
+  *
+  * @param producerId  The ID of the producer
+  * @param firstOffset The first offset (inclusive) of the transaction
+  * @param lastOffset  The last offset (inclusive) of the transaction. This is always the offset of the
+  *                    COMMIT/ABORT control record which indicates the transaction's completion.
+  * @param isAborted   Whether or not the transaction was aborted
+  */
 case class CompletedTxn(producerId: Long, firstOffset: Long, lastOffset: Long, isAborted: Boolean) {
   override def toString: String = {
     "CompletedTxn(" +
@@ -161,8 +163,8 @@ case class CompletedTxn(producerId: Long, firstOffset: Long, lastOffset: Long, i
 }
 
 /**
- * A class used to hold params required to decide to rotate a log segment or not.
- */
+  * A class used to hold params required to decide to rotate a log segment or not.
+  */
 case class RollParams(maxSegmentMs: Long,
                       maxSegmentBytes: Int,
                       maxTimestampInMessages: Long,
@@ -172,42 +174,43 @@ case class RollParams(maxSegmentMs: Long,
 
 object RollParams {
   def apply(config: LogConfig, appendInfo: LogAppendInfo, messagesSize: Int, now: Long): RollParams = {
-   new RollParams(config.maxSegmentMs,
-     config.segmentSize,
-     appendInfo.maxTimestamp,
-     appendInfo.lastOffset,
-     messagesSize, now)
+    new RollParams(config.maxSegmentMs,
+      config.segmentSize,
+      appendInfo.maxTimestamp,
+      appendInfo.lastOffset,
+      messagesSize, now)
   }
 }
 
 /**
- * An append-only log for storing messages.
- *
- * The log is a sequence of LogSegments, each with a base offset denoting the first message in the segment.
- *
- * New log segments are created according to a configurable policy that controls the size in bytes or time interval
- * for a given segment.
- *
- * @param dir The directory in which log segments are created.
- * @param config The log configuration settings
- * @param logStartOffset The earliest offset allowed to be exposed to kafka client.
- *                       The logStartOffset can be updated by :
- *                       - user's DeleteRecordsRequest
- *                       - broker's log retention
- *                       - broker's log truncation
- *                       The logStartOffset is used to decide the following:
- *                       - Log deletion. LogSegment whose nextOffset <= log's logStartOffset can be deleted.
- *                         It may trigger log rolling if the active segment is deleted.
- *                       - Earliest offset of the log in response to ListOffsetRequest. To avoid OffsetOutOfRange exception after user seeks to earliest offset,
- *                         we make sure that logStartOffset <= log's highWatermark
- *                       Other activities such as log cleaning are not affected by logStartOffset.
- * @param recoveryPoint The offset at which to begin recovery--i.e. the first offset which has not been flushed to disk
- * @param scheduler The thread pool scheduler used for background actions
- * @param brokerTopicStats Container for Broker Topic Yammer Metrics
- * @param time The time instance used for checking the clock
- * @param maxProducerIdExpirationMs The maximum amount of time to wait before a producer id is considered expired
- * @param producerIdExpirationCheckIntervalMs How often to check for producer ids which need to be expired
- */
+  * Log类的定义
+  * An append-only log for storing messages.
+  *
+  * The log is a sequence of LogSegments, each with a base offset denoting the first message in the segment.
+  *
+  * New log segments are created according to a configurable policy that controls the size in bytes or time interval
+  * for a given segment.
+  *
+  * @param dir                                 主题分区的路径 The directory in which log segments are created.
+  * @param config                              The log configuration settings
+  * @param logStartOffset                      日志的当前最早位移 The earliest offset allowed to be exposed to kafka client.
+  *                                            The logStartOffset can be updated by :
+  *                       - user's DeleteRecordsRequest
+  *                       - broker's log retention
+  *                       - broker's log truncation
+  *                                            The logStartOffset is used to decide the following:
+  *                       - Log deletion. LogSegment whose nextOffset <= log's logStartOffset can be deleted.
+  *                                            It may trigger log rolling if the active segment is deleted.
+  *                       - Earliest offset of the log in response to ListOffsetRequest. To avoid OffsetOutOfRange exception after user seeks to earliest offset,
+  *                                            we make sure that logStartOffset <= log's highWatermark
+  *                                            Other activities such as log cleaning are not affected by logStartOffset.
+  * @param recoveryPoint                       The offset at which to begin recovery--i.e. the first offset which has not been flushed to disk
+  * @param scheduler                           The thread pool scheduler used for background actions
+  * @param brokerTopicStats                    Container for Broker Topic Yammer Metrics
+  * @param time                                The time instance used for checking the clock
+  * @param maxProducerIdExpirationMs           The maximum amount of time to wait before a producer id is considered expired
+  * @param producerIdExpirationCheckIntervalMs How often to check for producer ids which need to be expired
+  */
 @threadsafe
 class Log(@volatile var dir: File,
           @volatile var config: LogConfig,
@@ -258,6 +261,8 @@ class Log(@volatile var dir: File,
       throw new KafkaStorageException(s"The memory mapped buffer for log of $topicPartition is already closed")
   }
 
+  //它封装了下一条待插入消息的位移值基本上等于LEO
+  //Log 对象中的 LEO 永远指向下一条待插入消息，也就是说，LEO 值上面是没有消息的！
   @volatile private var nextOffsetMetadata: LogOffsetMetadata = _
 
   /* The earliest offset which is part of an incomplete transaction. This is used to compute the
@@ -278,27 +283,55 @@ class Log(@volatile var dir: File,
    * equals the log end offset (which may never happen for a partition under consistent load). This is needed to
    * prevent the log start offset (which is exposed in fetch responses) from getting ahead of the high watermark.
    */
+  //分区日志高水位值（Metadata）
   @volatile private var highWatermarkMetadata: LogOffsetMetadata = LogOffsetMetadata(logStartOffset)
 
   /* the actual segments of the log */
+  //（Log相当于是LogSegment的容器）保存了分区日志下所有的日志段信息，Map结构，Key 值是日志段的起始位移值，Value 则是日志段对象本身
   private val segments: ConcurrentNavigableMap[java.lang.Long, LogSegment] = new ConcurrentSkipListMap[java.lang.Long, LogSegment]
 
   // Visible for testing
+  //leaderEpochCache 用来判断出现 Failure 时是否执行日志截断操作(中文简称朝代)
   @volatile var leaderEpochCache: Option[LeaderEpochFileCache] = None
 
+  /**
+    * 自行实现的方法
+    * @return
+    */
+  private def countDifferBetweenHighWaterAndNextOffset(): Long = {
+    //获取高水位
+    val highWater = highWatermarkMetadata
+    //nextOffsetMetadata 相当于LEO
+    val leo = nextOffsetMetadata
+    if (highWater.messageOffsetOnly) {
+      //如果高水位不全，先补全
+      val fullHighWater = convertToOffsetMetadataOrThrow(highWater.messageOffset)
+      //计算差值
+      leo.messageOffset - fullHighWater.messageOffset
+    } else {
+      //计算差值
+      leo.messageOffset - highWater.messageOffset
+    }
+  }
+
+  /**
+    * Log初始化
+    */
   locally {
     val startMs = time.milliseconds
 
     // create the log directory if it doesn't exist
+    // 创建日志路径，保存Log对象磁盘文件
     Files.createDirectories(dir.toPath)
-
+    //初始化LeaderEpochCache
     initializeLeaderEpochCache()
-
+    //加载所有日志段对象 并返回该Log对象下一条消息的位移值
     val nextOffset = loadSegments()
 
     /* Calculate the offset of the next message */
+    // 初始化LEO元数据对象，LEO值为上一步获取的位移值，起始位移值是Active Segment的起始位移值
     nextOffsetMetadata = LogOffsetMetadata(nextOffset, activeSegment.baseOffset, activeSegment.size)
-
+    // 更新Leader Epoch缓存，去除LEO值之上的所有无效缓存项
     leaderEpochCache.foreach(_.truncateFromEnd(nextOffsetMetadata.messageOffset))
 
     updateLogStartOffset(math.max(logStartOffset, segments.firstEntry.getValue.baseOffset))
@@ -316,52 +349,68 @@ class Log(@volatile var dir: File,
       s"log end offset $logEndOffset in ${time.milliseconds() - startMs} ms")
   }
 
+  // getter method：读取高水位的位移值
   def highWatermark: Long = highWatermarkMetadata.messageOffset
 
   /**
-   * Update the high watermark to a new offset. The new high watermark will be lower
-   * bounded by the log start offset and upper bounded by the log end offset.
-   *
-   * This is intended to be called when initializing the high watermark or when updating
-   * it on a follower after receiving a Fetch response from the leader.
-   *
-   * @param hw the suggested new value for the high watermark
-   * @return the updated high watermark offset
-   */
+    * Update the high watermark to a new offset. The new high watermark will be lower
+    * bounded by the log start offset and upper bounded by the log end offset.
+    *
+    * This is intended to be called when initializing the high watermark or when updating
+    * it on a follower after receiving a Fetch response from the leader.
+    *
+    * @param hw the suggested new value for the high watermark
+    * @return the updated high watermark offset
+    *         一定要更新高水位值
+    */
   def updateHighWatermark(hw: Long): Long = {
+    // 新高水位值一定介于[Log Start Offset，Log End Offset]之间
     val newHighWatermark = if (hw < logStartOffset)
       logStartOffset
     else if (hw > logEndOffset)
       logEndOffset
     else
       hw
+    //设置高水位为给定值
     updateHighWatermarkMetadata(LogOffsetMetadata(newHighWatermark))
-    newHighWatermark
+    newHighWatermark // 最后返回新高水位值
   }
 
+
+  // 其实，这两个方法有着不同的用途。updateHighWatermark 方法，主要用在 Follower 副本从 Leader 副本获取到消息后更新高水位值。
+  // 一旦拿到新的消息，就必须要更新高水位值；而 maybeIncrementHighWatermark 方法，主要是用来更新 Leader 副本的高水位值。
+  // 需要注意的是，Leader 副本高水位值的更新是有条件的——某些情况下会更新高水位值，某些情况下可能不会。
+
+  // Follower 副本成功拉取 Leader 副本的消息后必须更新高水位值，但 Producer 端向 Leader 副本写入消息时，
+  // 分区的高水位值就可能不需要更新——因为它可能需要等待其他 Follower 副本同步的进度。因此，源码中定义了两个更新的方法，
+  // 它们分别应用于不同的场景。
   /**
-   * Update the high watermark to a new value if and only if it is larger than the old value. It is
-   * an error to update to a value which is larger than the log end offset.
-   *
-   * This method is intended to be used by the leader to update the high watermark after follower
-   * fetch offsets have been updated.
-   *
-   * @return the old high watermark, if updated by the new value
-   */
+    * Update the high watermark to a new value if and only if it is larger than the old value. It is
+    * an error to update to a value which is larger than the log end offset.
+    *
+    * This method is intended to be used by the leader to update the high watermark after follower
+    * fetch offsets have been updated.
+    *
+    * @return the old high watermark, if updated by the new value
+    *         可能会更新也可能不会
+    */
   def maybeIncrementHighWatermark(newHighWatermark: LogOffsetMetadata): Option[LogOffsetMetadata] = {
+    // 新高水位值不能越过Log End Offset
     if (newHighWatermark.messageOffset > logEndOffset)
       throw new IllegalArgumentException(s"High watermark $newHighWatermark update exceeds current " +
         s"log end offset $logEndOffsetMetadata")
-
+    //上锁
     lock.synchronized {
-      val oldHighWatermark = fetchHighWatermarkMetadata
+      val oldHighWatermark = fetchHighWatermarkMetadata // 获取老的高水位值
 
       // Ensure that the high watermark increases monotonically. We also update the high watermark when the new
       // offset metadata is on a newer segment, which occurs whenever the log is rolled to a new segment.
+      // 新高水位值要比老高水位值大以维持单调增加特性，否则就不做更新！
+      // 另外，如果新高水位值在新日志段上，也可执行更新高水位操作
       if (oldHighWatermark.messageOffset < newHighWatermark.messageOffset ||
         (oldHighWatermark.messageOffset == newHighWatermark.messageOffset && oldHighWatermark.onOlderSegment(newHighWatermark))) {
         updateHighWatermarkMetadata(newHighWatermark)
-        Some(oldHighWatermark)
+        Some(oldHighWatermark) // 返回老的高水位值
       } else {
         None
       }
@@ -369,17 +418,19 @@ class Log(@volatile var dir: File,
   }
 
   /**
-   * Get the offset and metadata for the current high watermark. If offset metadata is not
-   * known, this will do a lookup in the index and cache the result.
-   */
+    * Get the offset and metadata for the current high watermark. If offset metadata is not
+    * known, this will do a lookup in the index and cache the result.
+    * 相当于getter方法
+    */
   private def fetchHighWatermarkMetadata: LogOffsetMetadata = {
+    // 读取时确保日志不能被关闭
     checkIfMemoryMappedBufferClosed()
 
-    val offsetMetadata = highWatermarkMetadata
-    if (offsetMetadata.messageOffsetOnly) {
+    val offsetMetadata = highWatermarkMetadata // 保存当前高水位值到本地变量，避免多线程访问干扰
+    if (offsetMetadata.messageOffsetOnly) { //没有获得到完整的高水位元数据
       lock.synchronized {
-        val fullOffset = convertToOffsetMetadataOrThrow(highWatermark)
-        updateHighWatermarkMetadata(fullOffset)
+        val fullOffset = convertToOffsetMetadataOrThrow(highWatermark) // 通过读日志文件的方式把完整的高水位元数据信息拉出来
+        updateHighWatermarkMetadata(fullOffset) // 然后再更新一下高水位对象
         fullOffset
       }
     } else {
@@ -387,24 +438,28 @@ class Log(@volatile var dir: File,
     }
   }
 
+  // setter method：设置高水位值
   private def updateHighWatermarkMetadata(newHighWatermark: LogOffsetMetadata): Unit = {
+    //水位不能为负数
     if (newHighWatermark.messageOffset < 0)
       throw new IllegalArgumentException("High watermark offset should be non-negative")
-
+    //上锁
     lock synchronized {
       highWatermarkMetadata = newHighWatermark
+      //处理事务状态管理器的高水位值更新逻辑
       producerStateManager.onHighWatermarkUpdated(newHighWatermark.messageOffset)
+      //First Unstable Offset是Kafka事务机制的一部分 也可能触发更新
       maybeIncrementFirstUnstableOffset()
     }
     trace(s"Setting high watermark $newHighWatermark")
   }
 
   /**
-   * Get the first unstable offset. Unlike the last stable offset, which is always defined,
-   * the first unstable offset only exists if there are transactions in progress.
-   *
-   * @return the first unstable offset, if it exists
-   */
+    * Get the first unstable offset. Unlike the last stable offset, which is always defined,
+    * the first unstable offset only exists if there are transactions in progress.
+    *
+    * @return the first unstable offset, if it exists
+    */
   private[log] def firstUnstableOffset: Option[Long] = firstUnstableOffsetMetadata.map(_.messageOffset)
 
   private def fetchLastStableOffsetMetadata: LogOffsetMetadata = {
@@ -427,12 +482,12 @@ class Log(@volatile var dir: File,
   }
 
   /**
-   * The last stable offset (LSO) is defined as the first offset such that all lower offsets have been "decided."
-   * Non-transactional messages are considered decided immediately, but transactional messages are only decided when
-   * the corresponding COMMIT or ABORT marker is written. This implies that the last stable offset will be equal
-   * to the high watermark if there are no transactional messages in the log. Note also that the LSO cannot advance
-   * beyond the high watermark.
-   */
+    * The last stable offset (LSO) is defined as the first offset such that all lower offsets have been "decided."
+    * Non-transactional messages are considered decided immediately, but transactional messages are only decided when
+    * the corresponding COMMIT or ABORT marker is written. This implies that the last stable offset will be equal
+    * to the high watermark if there are no transactional messages in the log. Note also that the LSO cannot advance
+    * beyond the high watermark.
+    */
   def lastStableOffset: Long = {
     firstUnstableOffsetMetadata match {
       case Some(offsetMetadata) if offsetMetadata.messageOffset < highWatermark => offsetMetadata.messageOffset
@@ -476,7 +531,7 @@ class Log(@volatile var dir: File,
   }, period = producerIdExpirationCheckIntervalMs, delay = producerIdExpirationCheckIntervalMs, unit = TimeUnit.MILLISECONDS)
 
   /** The name of this log */
-  def name  = dir.getName()
+  def name = dir.getName()
 
   def recordVersion: RecordVersion = config.messageFormatVersion.recordVersion
 
@@ -505,14 +560,15 @@ class Log(@volatile var dir: File,
   }
 
   /**
-   * Removes any temporary files found in log directory, and creates a list of all .swap files which could be swapped
-   * in place of existing segment(s). For log splitting, we know that any .swap file whose base offset is higher than
-   * the smallest offset .clean file could be part of an incomplete split operation. Such .swap files are also deleted
-   * by this method.
-   * @return Set of .swap files that are valid to be swapped in as segment files
-   */
+    * Removes any temporary files found in log directory, and creates a list of all .swap files which could be swapped
+    * in place of existing segment(s). For log splitting, we know that any .swap file whose base offset is higher than
+    * the smallest offset .clean file could be part of an incomplete split operation. Such .swap files are also deleted
+    * by this method.
+    *
+    * @return Set of .swap files that are valid to be swapped in as segment files
+    */
   private def removeTempFilesAndCollectSwapFiles(): Set[File] = {
-
+    // 在方法内部定义一个名为deleteIndicesIfExist的方法，用于删除日志文件对应的索引文件
     def deleteIndicesIfExist(baseFile: File, suffix: String = ""): Unit = {
       info(s"Deleting index files with suffix $suffix for baseFile $baseFile")
       val offset = offsetFromFile(baseFile)
@@ -524,28 +580,30 @@ class Log(@volatile var dir: File,
     var swapFiles = Set[File]()
     var cleanFiles = Set[File]()
     var minCleanedFileOffset = Long.MaxValue
-
+    // 遍历分区日志路径下的所有文件
     for (file <- dir.listFiles if file.isFile) {
+      // 如果不可读，直接抛出IOException
       if (!file.canRead)
         throw new IOException(s"Could not read file $file")
       val filename = file.getName
-      if (filename.endsWith(DeletedFileSuffix)) {
+      if (filename.endsWith(DeletedFileSuffix)) { // 如果以.deleted结尾
         debug(s"Deleting stray temporary file ${file.getAbsolutePath}")
-        Files.deleteIfExists(file.toPath)
-      } else if (filename.endsWith(CleanedFileSuffix)) {
+        Files.deleteIfExists(file.toPath) // 说明是上次Failure遗留下来的文件，直接删除
+      } else if (filename.endsWith(CleanedFileSuffix)) { // 如果以.cleaned结尾
+        //从文件名上面读取 minCleanedFileOffset
         minCleanedFileOffset = Math.min(offsetFromFileName(filename), minCleanedFileOffset)
         cleanFiles += file
-      } else if (filename.endsWith(SwapFileSuffix)) {
+      } else if (filename.endsWith(SwapFileSuffix)) { // 如果以.swap结尾
         // we crashed in the middle of a swap operation, to recover:
         // if a log, delete the index files, complete the swap operation later
         // if an index just delete the index files, they will be rebuilt
         val baseFile = new File(CoreUtils.replaceSuffix(file.getPath, SwapFileSuffix, ""))
         info(s"Found file ${file.getAbsolutePath} from interrupted swap operation.")
-        if (isIndexFile(baseFile)) {
-          deleteIndicesIfExist(baseFile)
-        } else if (isLogFile(baseFile)) {
-          deleteIndicesIfExist(baseFile)
-          swapFiles += file
+        if (isIndexFile(baseFile)) { // 如果该.swap文件原来是索引文件
+          deleteIndicesIfExist(baseFile) // 删除原来的索引文件
+        } else if (isLogFile(baseFile)) { // 如果该.swap文件原来是日志文件
+          deleteIndicesIfExist(baseFile) // 删除掉原来的索引文件
+          swapFiles += file // 加入待恢复的.swap文件集合中
         }
       }
     }
@@ -553,6 +611,7 @@ class Log(@volatile var dir: File,
     // KAFKA-6264: Delete all .swap files whose base offset is greater than the minimum .cleaned segment offset. Such .swap
     // files could be part of an incomplete split operation that could not complete. See Log#splitOverflowedSegment
     // for more details about the split operation.
+    // 从待恢复swap集合中找出那些起始位移值大于minCleanedFileOffset值的文件，直接删掉这些无效的.swap文件
     val (invalidSwapFiles, validSwapFiles) = swapFiles.partition(file => offsetFromFile(file) >= minCleanedFileOffset)
     invalidSwapFiles.foreach { file =>
       debug(s"Deleting invalid swap file ${file.getAbsoluteFile} minCleanedFileOffset: $minCleanedFileOffset")
@@ -562,37 +621,41 @@ class Log(@volatile var dir: File,
     }
 
     // Now that we have deleted all .swap files that constitute an incomplete split operation, let's delete all .clean files
+    // 清除所有待删除文件集合中的文件
     cleanFiles.foreach { file =>
       debug(s"Deleting stray .clean file ${file.getAbsolutePath}")
       Files.deleteIfExists(file.toPath)
     }
-
+    // 最后返回当前有效的.swap文件集合
     validSwapFiles
   }
 
   /**
-   * This method does not need to convert IOException to KafkaStorageException because it is only called before all logs are loaded
-   * It is possible that we encounter a segment with index offset overflow in which case the LogSegmentOffsetOverflowException
-   * will be thrown. Note that any segments that were opened before we encountered the exception will remain open and the
-   * caller is responsible for closing them appropriately, if needed.
-   * @throws LogSegmentOffsetOverflowException if the log directory contains a segment with messages that overflow the index offset
-   */
+    * This method does not need to convert IOException to KafkaStorageException because it is only called before all logs are loaded
+    * It is possible that we encounter a segment with index offset overflow in which case the LogSegmentOffsetOverflowException
+    * will be thrown. Note that any segments that were opened before we encountered the exception will remain open and the
+    * caller is responsible for closing them appropriately, if needed.
+    *
+    * @throws LogSegmentOffsetOverflowException if the log directory contains a segment with messages that overflow the index offset
+    */
   private def loadSegmentFiles(): Unit = {
     // load segments in ascending order because transactional data from one segment may depend on the
     // segments that come before it
+    // 按照日志段文件名中的位移值正序排列，然后遍历每个文件
     for (file <- dir.listFiles.sortBy(_.getName) if file.isFile) {
-      if (isIndexFile(file)) {
+      if (isIndexFile(file)) { // 如果是索引文件
         // if it is an index file, make sure it has a corresponding .log file
         val offset = offsetFromFile(file)
         val logFile = Log.logFile(dir, offset)
-        if (!logFile.exists) {
+        if (!logFile.exists) { // 确保存在对应的日志文件，否则记录一个警告，并删除该索引文件
           warn(s"Found an orphaned index file ${file.getAbsolutePath}, with no corresponding log file.")
           Files.deleteIfExists(file.toPath)
         }
-      } else if (isLogFile(file)) {
+      } else if (isLogFile(file)) { // 如果是日志文件
         // if it's a log file, load the corresponding log segment
         val baseOffset = offsetFromFile(file)
         val timeIndexFileNewlyCreated = !Log.timeIndexFile(dir, baseOffset).exists()
+        // 创建对应的LogSegment对象实例，并加入segments中
         val segment = LogSegment.open(dir = dir,
           baseOffset = baseOffset,
           config,
@@ -616,12 +679,13 @@ class Log(@volatile var dir: File,
   }
 
   /**
-   * Recover the given segment.
-   * @param segment Segment to recover
-   * @param leaderEpochCache Optional cache for updating the leader epoch during recovery
-   * @return The number of bytes truncated from the segment
-   * @throws LogSegmentOffsetOverflowException if the segment contains messages that cause index offset overflow
-   */
+    * Recover the given segment.
+    *
+    * @param segment          Segment to recover
+    * @param leaderEpochCache Optional cache for updating the leader epoch during recovery
+    * @return The number of bytes truncated from the segment
+    * @throws LogSegmentOffsetOverflowException if the segment contains messages that cause index offset overflow
+    */
   private def recoverSegment(segment: LogSegment,
                              leaderEpochCache: Option[LeaderEpochFileCache] = None): Int = lock synchronized {
     val producerStateManager = new ProducerStateManager(topicPartition, dir, maxProducerIdExpirationMs)
@@ -634,25 +698,30 @@ class Log(@volatile var dir: File,
   }
 
   /**
-   * This method does not need to convert IOException to KafkaStorageException because it is only called before all logs
-   * are loaded.
-   * @throws LogSegmentOffsetOverflowException if the swap file contains messages that cause the log segment offset to
-   *                                           overflow. Note that this is currently a fatal exception as we do not have
-   *                                           a way to deal with it. The exception is propagated all the way up to
-   *                                           KafkaServer#startup which will cause the broker to shut down if we are in
-   *                                           this situation. This is expected to be an extremely rare scenario in practice,
-   *                                           and manual intervention might be required to get out of it.
-   */
+    * This method does not need to convert IOException to KafkaStorageException because it is only called before all logs
+    * are loaded.
+    *
+    * @throws LogSegmentOffsetOverflowException if the swap file contains messages that cause the log segment offset to
+    *                                           overflow. Note that this is currently a fatal exception as we do not have
+    *                                           a way to deal with it. The exception is propagated all the way up to
+    *                                           KafkaServer#startup which will cause the broker to shut down if we are in
+    *                                           this situation. This is expected to be an extremely rare scenario in practice,
+    *                                           and manual intervention might be required to get out of it.
+    */
   private def completeSwapOperations(swapFiles: Set[File]): Unit = {
+    // 遍历所有有效.swap文件
     for (swapFile <- swapFiles) {
       val logFile = new File(CoreUtils.replaceSuffix(swapFile.getPath, SwapFileSuffix, ""))
+      // 拿到日志文件的起始位移值
       val baseOffset = offsetFromFile(logFile)
+      // 创建对应的LogSegment实例
       val swapSegment = LogSegment.open(swapFile.getParentFile,
         baseOffset = baseOffset,
         config,
         time = time,
         fileSuffix = SwapFileSuffix)
       info(s"Found log file ${swapFile.getPath} from interrupted swap operation, repairing.")
+      // 执行日志段恢复操作
       recoverSegment(swapSegment)
 
       // We create swap files for two cases:
@@ -663,34 +732,45 @@ class Log(@volatile var dir: File,
       // must fall within the range of existing segment(s). If we cannot find such a segment, it means the deletion
       // of that segment was successful. In such an event, we should simply rename the .swap to .log without having to
       // do a replace with an existing segment.
+      // 确认之前删除日志段是否成功，是否还存在老的日志段文件
       val oldSegments = logSegments(swapSegment.baseOffset, swapSegment.readNextOffset).filter { segment =>
         segment.readNextOffset > swapSegment.baseOffset
       }
+      // 如果存在，直接把.swap文件重命名成.log
       replaceSegments(Seq(swapSegment), oldSegments.toSeq, isRecoveredSwapFile = true)
     }
   }
 
   /**
-   * Load the log segments from the log files on disk and return the next offset.
-   * This method does not need to convert IOException to KafkaStorageException because it is only called before all logs
-   * are loaded.
-   * @throws LogSegmentOffsetOverflowException if we encounter a .swap file with messages that overflow index offset; or when
-   *                                           we find an unexpected number of .log files with overflow
-   */
+    * 这段代码会对分区日志路径遍历两次。
+    * 首先，它会移除上次 Failure 遗留下来的各种临时文件（包括.cleaned、.swap、.deleted 文件等），removeTempFilesAndCollectSwapFiles 方法实现了这个逻辑。
+    * 之后，它会清空所有日志段对象，并且再次遍历分区路径，重建日志段 segments Map 以及索引文件。
+    * 待执行完这两次遍历之后，它会完成未完成的 swap 操作，即调用 completeSwapOperations 方法。等这些都做完之后，再调用 recoverLog 方法恢复日志段对象，然后返回恢复之后的分区日志 LEO 值。
+    * Load the log segments from the log files on disk and return the next offset.
+    * This method does not need to convert IOException to KafkaStorageException because it is only called before all logs
+    * are loaded.
+    *
+    * @throws LogSegmentOffsetOverflowException if we encounter a .swap file with messages that overflow index offset; or when
+    *                                           we find an unexpected number of .log files with overflow
+    */
   private def loadSegments(): Long = {
     // first do a pass through the files in the log directory and remove any temporary files
     // and find any interrupted swap operations
+    //清除上次执行的临时文件 包括.cleaned、.swap、.deleted 文件等 第一次遍历路径
     val swapFiles = removeTempFilesAndCollectSwapFiles()
 
     // Now do a second pass and load all the log and index files.
     // We might encounter legacy log segments with offset overflow (KAFKA-6264). We need to split such segments. When
     // this happens, restart loading segment files from scratch.
+
     retryOnOffsetOverflow {
       // In case we encounter a segment with offset overflow, the retry logic will split it after which we need to retry
       // loading of segments. In that case, we also need to close all segments that could have been left open in previous
       // call to loadSegmentFiles().
       logSegments.foreach(_.close())
+      //清空所有日志段对象
       segments.clear()
+      //第二次遍历分区路径 重建日志段 segments Map 以及索引文件。
       loadSegmentFiles()
     }
 
@@ -708,15 +788,15 @@ class Log(@volatile var dir: File,
       activeSegment.resizeIndexes(config.maxIndexSize)
       nextOffset
     } else {
-       if (logSegments.isEmpty) {
-          addSegment(LogSegment.open(dir = dir,
-            baseOffset = 0,
-            config,
-            time = time,
-            fileAlreadyExists = false,
-            initFileSize = this.initFileSize,
-            preallocate = false))
-       }
+      if (logSegments.isEmpty) {
+        addSegment(LogSegment.open(dir = dir,
+          baseOffset = 0,
+          config,
+          time = time,
+          fileAlreadyExists = false,
+          initFileSize = this.initFileSize,
+          preallocate = false))
+      }
       0
     }
   }
@@ -748,11 +828,12 @@ class Log(@volatile var dir: File,
   }
 
   /**
-   * Recover the log segments and return the next offset after recovery.
-   * This method does not need to convert IOException to KafkaStorageException because it is only called before all
-   * logs are loaded.
-   * @throws LogSegmentOffsetOverflowException if we encountered a legacy segment with offset overflow
-   */
+    * Recover the log segments and return the next offset after recovery.
+    * This method does not need to convert IOException to KafkaStorageException because it is only called before all
+    * logs are loaded.
+    *
+    * @throws LogSegmentOffsetOverflowException if we encountered a legacy segment with offset overflow
+    */
   private def recoverLog(): Long = {
     // if we have the clean shutdown marker, skip recovery
     if (!hasCleanShutdownFile) {
@@ -836,7 +917,7 @@ class Log(@volatile var dir: File,
     // (or later snapshots). Otherwise, if there is no snapshot file, then we have to rebuild producer state
     // from the first segment.
     if (messageFormatVersion < RecordBatch.MAGIC_VALUE_V2 ||
-        (producerStateManager.latestSnapshotOffset.isEmpty && reloadFromCleanShutdown)) {
+      (producerStateManager.latestSnapshotOffset.isEmpty && reloadFromCleanShutdown)) {
       // To avoid an expensive scan through all of the segments, we take empty snapshots from the start of the
       // last two segments and the last offset. This should avoid the full scan in the case that the log needs
       // truncation.
@@ -914,27 +995,27 @@ class Log(@volatile var dir: File,
 
   private[log] def lastRecordsOfActiveProducers: Map[Long, LastRecord] = lock synchronized {
     producerStateManager.activeProducers.map { case (producerId, producerIdEntry) =>
-      val lastDataOffset = if (producerIdEntry.lastDataOffset >= 0 ) Some(producerIdEntry.lastDataOffset) else None
+      val lastDataOffset = if (producerIdEntry.lastDataOffset >= 0) Some(producerIdEntry.lastDataOffset) else None
       val lastRecord = LastRecord(lastDataOffset, producerIdEntry.producerEpoch)
       producerId -> lastRecord
     }
   }
 
   /**
-   * Check if we have the "clean shutdown" file
-   */
+    * Check if we have the "clean shutdown" file
+    */
   private def hasCleanShutdownFile: Boolean = new File(dir.getParentFile, CleanShutdownFile).exists()
 
   /**
-   * The number of segments in the log.
-   * Take care! this is an O(n) operation.
-   */
+    * The number of segments in the log.
+    * Take care! this is an O(n) operation.
+    */
   def numberOfSegments: Int = segments.size
 
   /**
-   * Close this log.
-   * The memory mapped buffer for index files of this log will be left open until the log is deleted.
-   */
+    * Close this log.
+    * The memory mapped buffer for index files of this log will be left open until the log is deleted.
+    */
   def close(): Unit = {
     debug("Closing log")
     lock synchronized {
@@ -951,10 +1032,10 @@ class Log(@volatile var dir: File,
   }
 
   /**
-   * Rename the directory of the log
-   *
-   * @throws KafkaStorageException if rename fails
-   */
+    * Rename the directory of the log
+    *
+    * @throws KafkaStorageException if rename fails
+    */
   def renameDir(name: String): Unit = {
     lock synchronized {
       maybeHandleIOException(s"Error while renaming dir for $topicPartition in log dir ${dir.getParent}") {
@@ -973,8 +1054,8 @@ class Log(@volatile var dir: File,
   }
 
   /**
-   * Close file handlers used by log but don't write to disk. This is called if the log directory is offline
-   */
+    * Close file handlers used by log but don't write to disk. This is called if the log directory is offline
+    */
   def closeHandlers(): Unit = {
     debug("Closing handlers")
     lock synchronized {
@@ -984,14 +1065,14 @@ class Log(@volatile var dir: File,
   }
 
   /**
-   * Append this message set to the active segment of the log, assigning offsets and Partition Leader Epochs
-   *
-   * @param records The records to append
-   * @param origin Declares the origin of the append which affects required validations
-   * @param interBrokerProtocolVersion Inter-broker message protocol version
-   * @throws KafkaStorageException If the append fails due to an I/O error.
-   * @return Information about the appended messages including the first and last offset.
-   */
+    * Append this message set to the active segment of the log, assigning offsets and Partition Leader Epochs
+    *
+    * @param records                    The records to append
+    * @param origin                     Declares the origin of the append which affects required validations
+    * @param interBrokerProtocolVersion Inter-broker message protocol version
+    * @throws KafkaStorageException If the append fails due to an I/O error.
+    * @return Information about the appended messages including the first and last offset.
+    */
   def appendAsLeader(records: MemoryRecords,
                      leaderEpoch: Int,
                      origin: AppendOrigin = AppendOrigin.Client,
@@ -1000,12 +1081,12 @@ class Log(@volatile var dir: File,
   }
 
   /**
-   * Append this message set to the active segment of the log without assigning offsets or Partition Leader Epochs
-   *
-   * @param records The records to append
-   * @throws KafkaStorageException If the append fails due to an I/O error.
-   * @return Information about the appended messages including the first and last offset.
-   */
+    * Append this message set to the active segment of the log without assigning offsets or Partition Leader Epochs
+    *
+    * @param records The records to append
+    * @throws KafkaStorageException If the append fails due to an I/O error.
+    * @return Information about the appended messages including the first and last offset.
+    */
   def appendAsFollower(records: MemoryRecords): LogAppendInfo = {
     append(records,
       origin = AppendOrigin.Replication,
@@ -1015,21 +1096,21 @@ class Log(@volatile var dir: File,
   }
 
   /**
-   * Append this message set to the active segment of the log, rolling over to a fresh segment if necessary.
-   *
-   * This method will generally be responsible for assigning offsets to the messages,
-   * however if the assignOffsets=false flag is passed we will only check that the existing offsets are valid.
-   *
-   * @param records The log records to append
-   * @param origin Declares the origin of the append which affects required validations
-   * @param interBrokerProtocolVersion Inter-broker message protocol version
-   * @param assignOffsets Should the log assign offsets to this message set or blindly apply what it is given
-   * @param leaderEpoch The partition's leader epoch which will be applied to messages when offsets are assigned on the leader
-   * @throws KafkaStorageException If the append fails due to an I/O error.
-   * @throws OffsetsOutOfOrderException If out of order offsets found in 'records'
-   * @throws UnexpectedAppendOffsetException If the first or last offset in append is less than next offset
-   * @return Information about the appended messages including the first and last offset.
-   */
+    * Append this message set to the active segment of the log, rolling over to a fresh segment if necessary.
+    *
+    * This method will generally be responsible for assigning offsets to the messages,
+    * however if the assignOffsets=false flag is passed we will only check that the existing offsets are valid.
+    *
+    * @param records                    The log records to append
+    * @param origin                     Declares the origin of the append which affects required validations
+    * @param interBrokerProtocolVersion Inter-broker message protocol version
+    * @param assignOffsets              Should the log assign offsets to this message set or blindly apply what it is given
+    * @param leaderEpoch                The partition's leader epoch which will be applied to messages when offsets are assigned on the leader
+    * @throws KafkaStorageException           If the append fails due to an I/O error.
+    * @throws OffsetsOutOfOrderException      If out of order offsets found in 'records'
+    * @throws UnexpectedAppendOffsetException If the first or last offset in append is less than next offset
+    * @return Information about the appended messages including the first and last offset.
+    */
   private def append(records: MemoryRecords,
                      origin: AppendOrigin,
                      interBrokerProtocolVersion: ApiVersion,
@@ -1099,7 +1180,7 @@ class Log(@volatile var dir: File,
           // we are taking the offsets we are given
           if (!appendInfo.offsetsMonotonic)
             throw new OffsetsOutOfOrderException(s"Out of order offsets found in append to $topicPartition: " +
-                                                 records.records.asScala.map(_.offset))
+              records.records.asScala.map(_.offset))
 
           if (appendInfo.firstOrLastOffsetOfFirstBatch < nextOffsetMetadata.messageOffset) {
             // we may still be able to recover if the log is empty
@@ -1113,9 +1194,9 @@ class Log(@volatile var dir: File,
             val firstOrLast = if (appendInfo.firstOffset.isDefined) "First offset" else "Last offset of the first batch"
             throw new UnexpectedAppendOffsetException(
               s"Unexpected offset in append to $topicPartition. $firstOrLast " +
-              s"${appendInfo.firstOrLastOffsetOfFirstBatch} is less than the next offset ${nextOffsetMetadata.messageOffset}. " +
-              s"First 10 offsets in append: ${records.records.asScala.take(10).map(_.offset)}, last offset in" +
-              s" append: ${appendInfo.lastOffset}. Log start offset = $logStartOffset",
+                s"${appendInfo.firstOrLastOffsetOfFirstBatch} is less than the next offset ${nextOffsetMetadata.messageOffset}. " +
+                s"First 10 offsets in append: ${records.records.asScala.take(10).map(_.offset)}, last offset in" +
+                s" append: ${appendInfo.lastOffset}. Log start offset = $logStartOffset",
               firstOffset, appendInfo.lastOffset)
           }
         }
@@ -1243,8 +1324,8 @@ class Log(@volatile var dir: File,
   }
 
   /**
-   * Increment the log start offset if the provided offset is larger.
-   */
+    * Increment the log start offset if the provided offset is larger.
+    */
   def maybeIncrementLogStartOffset(newLogStartOffset: Long): Unit = {
     if (newLogStartOffset > highWatermark)
       throw new OffsetOutOfRangeException(s"Cannot increment the log start offset to $newLogStartOffset of partition $topicPartition " +
@@ -1304,23 +1385,23 @@ class Log(@volatile var dir: File,
   }
 
   /**
-   * Validate the following:
-   * <ol>
-   * <li> each message matches its CRC
-   * <li> each message size is valid
-   * <li> that the sequence numbers of the incoming record batches are consistent with the existing state and with each other.
-   * </ol>
-   *
-   * Also compute the following quantities:
-   * <ol>
-   * <li> First offset in the message set
-   * <li> Last offset in the message set
-   * <li> Number of messages
-   * <li> Number of valid bytes
-   * <li> Whether the offsets are monotonically increasing
-   * <li> Whether any compression codec is used (if many are used, then the last one is given)
-   * </ol>
-   */
+    * Validate the following:
+    * <ol>
+    * <li> each message matches its CRC
+    * <li> each message size is valid
+    * <li> that the sequence numbers of the incoming record batches are consistent with the existing state and with each other.
+    * </ol>
+    *
+    * Also compute the following quantities:
+    * <ol>
+    * <li> First offset in the message set
+    * <li> Last offset in the message set
+    * <li> Number of messages
+    * <li> Number of valid bytes
+    * <li> Whether the offsets are monotonically increasing
+    * <li> Whether any compression codec is used (if many are used, then the last one is given)
+    * </ol>
+    */
   private def analyzeAndValidateRecords(records: MemoryRecords, origin: AppendOrigin): LogAppendInfo = {
     var shallowMessageCount = 0
     var validBytesCount = 0
@@ -1403,12 +1484,12 @@ class Log(@volatile var dir: File,
   }
 
   /**
-   * Trim any invalid bytes from the end of this message set (if there are any)
-   *
-   * @param records The records to trim
-   * @param info The general information of the message set
-   * @return A trimmed message set. This may be the same as what was passed in or it may not.
-   */
+    * Trim any invalid bytes from the end of this message set (if there are any)
+    *
+    * @param records The records to trim
+    * @param info    The general information of the message set
+    * @return A trimmed message set. This may be the same as what was passed in or it may not.
+    */
   private def trimInvalidBytes(records: MemoryRecords, info: LogAppendInfo): MemoryRecords = {
     val validBytes = info.validBytes
     if (validBytes < 0)
@@ -1436,15 +1517,15 @@ class Log(@volatile var dir: File,
   }
 
   /**
-   * Read messages from the log.
-   *
-   * @param startOffset The offset to begin reading at
-   * @param maxLength The maximum number of bytes to read
-   * @param isolation The fetch isolation, which controls the maximum offset we are allowed to read
-   * @param minOneMessage If this is true, the first message will be returned even if it exceeds `maxLength` (if one exists)
-   * @throws OffsetOutOfRangeException If startOffset is beyond the log end offset or before the log start offset
-   * @return The fetch data information including fetch starting offset metadata and messages read.
-   */
+    * Read messages from the log.
+    *
+    * @param startOffset   The offset to begin reading at
+    * @param maxLength     The maximum number of bytes to read
+    * @param isolation     The fetch isolation, which controls the maximum offset we are allowed to read
+    * @param minOneMessage If this is true, the first message will be returned even if it exceeds `maxLength` (if one exists)
+    * @throws OffsetOutOfRangeException If startOffset is beyond the log end offset or before the log start offset
+    * @return The fetch data information including fetch starting offset metadata and messages read.
+    */
   def read(startOffset: Long,
            maxLength: Int,
            isolation: FetchIsolation,
@@ -1515,7 +1596,9 @@ class Log(@volatile var dir: File,
   private[log] def collectAbortedTransactions(startOffset: Long, upperBoundOffset: Long): List[AbortedTxn] = {
     val segmentEntry = segments.floorEntry(startOffset)
     val allAbortedTxns = ListBuffer.empty[AbortedTxn]
+
     def accumulator(abortedTxns: List[AbortedTxn]): Unit = allAbortedTxns ++= abortedTxns
+
     collectAbortedTransactions(logStartOffset, upperBoundOffset, segmentEntry, accumulator)
     allAbortedTxns.toList
   }
@@ -1534,7 +1617,9 @@ class Log(@volatile var dir: File,
     }
 
     val abortedTransactions = ListBuffer.empty[AbortedTransaction]
+
     def accumulator(abortedTxns: List[AbortedTxn]): Unit = abortedTransactions ++= abortedTxns.map(_.asAbortedTransaction)
+
     collectAbortedTransactions(startOffset, upperBoundOffset, segmentEntry, accumulator)
 
     FetchDataInfo(fetchOffsetMetadata = fetchInfo.fetchOffsetMetadata,
@@ -1557,19 +1642,19 @@ class Log(@volatile var dir: File,
   }
 
   /**
-   * Get an offset based on the given timestamp
-   * The offset returned is the offset of the first message whose timestamp is greater than or equals to the
-   * given timestamp.
-   *
-   * If no such message is found, the log end offset is returned.
-   *
-   * `NOTE:` OffsetRequest V0 does not use this method, the behavior of OffsetRequest V0 remains the same as before
-   * , i.e. it only gives back the timestamp based on the last modification time of the log segments.
-   *
-   * @param targetTimestamp The given timestamp for offset fetching.
-   * @return The offset of the first message whose timestamp is greater than or equals to the given timestamp.
-   *         None if no such message is found.
-   */
+    * Get an offset based on the given timestamp
+    * The offset returned is the offset of the first message whose timestamp is greater than or equals to the
+    * given timestamp.
+    *
+    * If no such message is found, the log end offset is returned.
+    *
+    * `NOTE:` OffsetRequest V0 does not use this method, the behavior of OffsetRequest V0 remains the same as before
+    * , i.e. it only gives back the timestamp based on the last modification time of the log segments.
+    *
+    * @param targetTimestamp The given timestamp for offset fetching.
+    * @return The offset of the first message whose timestamp is greater than or equals to the given timestamp.
+    *         None if no such message is found.
+    */
   def fetchOffsetByTimestamp(targetTimestamp: Long): Option[TimestampAndOffset] = {
     maybeHandleIOException(s"Error while fetching offset by timestamp for $topicPartition in dir ${dir.getParent}") {
       debug(s"Searching offset for timestamp $targetTimestamp")
@@ -1666,6 +1751,7 @@ class Log(@volatile var dir: File,
     */
   private def convertToOffsetMetadataOrThrow(offset: Long): LogOffsetMetadata = {
     val fetchDataInfo = read(offset,
+      //读一个字节的原因，只是为了取获取完整的 fetchOffsetMetadata 信息
       maxLength = 1,
       isolation = FetchLogEnd,
       minOneMessage = false)
@@ -1673,18 +1759,24 @@ class Log(@volatile var dir: File,
   }
 
   /**
-   * Delete any log segments matching the given predicate function,
-   * starting with the oldest segment and moving forward until a segment doesn't match.
-   *
-   * @param predicate A function that takes in a candidate log segment and the next higher segment
-   *                  (if there is one) and returns true iff it is deletable
-   * @return The number of segments deleted
-   */
+    * Delete any log segments matching the given predicate function,
+    * starting with the oldest segment and moving forward until a segment doesn't match.
+    *
+    * @param predicate A function that takes in a candidate log segment and the next higher segment
+    *                  (if there is one) and returns true iff it is deletable
+    *
+    *                  1、使用传入的函数计算哪些日志段对象能够被删除；
+    *                  2、调用 deleteSegments 方法删除这些日志段。
+    * @return The number of segments deleted
+    */
   private def deleteOldSegments(predicate: (LogSegment, Option[LogSegment]) => Boolean, reason: String): Int = {
+    //上锁
     lock synchronized {
+      //校验判断结果
       val deletable = deletableSegments(predicate)
       if (deletable.nonEmpty)
         info(s"Found deletable segments with base offsets [${deletable.map(_.baseOffset).mkString(",")}] due to $reason")
+      //执行删除操作
       deleteSegments(deletable)
     }
   }
@@ -1694,13 +1786,23 @@ class Log(@volatile var dir: File,
       val numToDelete = deletable.size
       if (numToDelete > 0) {
         // we must always have at least one segment, so if we are going to delete all the segments, create a new one first
+        // 不允许删除所有日志段对象。如果一定要做，先创建出一个新的来，然后再把前面N个删掉
         if (segments.size == numToDelete)
           roll()
+        //上锁
         lock synchronized {
+          // 确保Log对象没有被关闭 mmp没有关闭
           checkIfMemoryMappedBufferClosed()
           // remove the segments for lookups
+          // 删除给定的日志段对象以及异步删除底层的物理文件
           removeAndDeleteSegments(deletable, asyncDelete = true)
+          // 尝试更新日志的Log Start Offset值
           maybeIncrementLogStartOffset(segments.firstEntry.getValue.baseOffset)
+          //这里我稍微解释一下，为什么要在删除日志段对象之后，尝试更新 Log Start Offset 值。
+          // Log Start Offset 值是整个 Log 对象对外可见消息的最小位移值。
+          // 如果我们删除了日志段对象，很有可能对外可见消息的范围发生了变化，
+          // 自然要看一下是否需要更新 Log Start Offset 值。
+          // 这就是 deleteSegments 方法最后要更新 Log Start Offset 值的原因。
         }
       }
       numToDelete
@@ -1708,23 +1810,30 @@ class Log(@volatile var dir: File,
   }
 
   /**
-   * Find segments starting from the oldest until the user-supplied predicate is false or the segment
-   * containing the current high watermark is reached. We do not delete segments with offsets at or beyond
-   * the high watermark to ensure that the log start offset can never exceed it. If the high watermark
-   * has not yet been initialized, no segments are eligible for deletion.
-   *
-   * A final segment that is empty will never be returned (since we would just end up re-creating it).
-   *
-   * @param predicate A function that takes in a candidate log segment and the next higher segment
-   *                  (if there is one) and returns true iff it is deletable
-   * @return the segments ready to be deleted
-   */
+    * Find segments starting from the oldest until the user-supplied predicate is false or the segment
+    * containing the current high watermark is reached. We do not delete segments with offsets at or beyond
+    * the high watermark to ensure that the log start offset can never exceed it. If the high watermark
+    * has not yet been initialized, no segments are eligible for deletion.
+    *
+    * A final segment that is empty will never be returned (since we would just end up re-creating it).
+    *
+    * @param predicate A function that takes in a candidate log segment and the next higher segment
+    *                  (if there is one) and returns true iff it is deletable
+    * @return the segments ready to be deleted
+    */
   private def deletableSegments(predicate: (LogSegment, Option[LogSegment]) => Boolean): Iterable[LogSegment] = {
+    // 如果当前压根就没有任何日志段对象，直接返回
     if (segments.isEmpty) {
       Seq.empty
     } else {
       val deletable = ArrayBuffer.empty[LogSegment]
       var segmentEntry = segments.firstEntry
+      // 从具有最小起始位移值的日志段对象开始遍历，直到满足以下条件之一便停止遍历：
+      // 1. 测定条件函数predicate = false
+      // 2. 扫描到包含Log对象高水位值所在的日志段对象
+      // 3. 最新的日志段对象不包含任何消息
+      // 最新日志段对象是segments中Key值最大对应的那个日志段，也就是我们常说的Active Segment。完全为空的Active Segment如果被允许删除，后面还要重建它，故代码这里不允许删除大小为空的Active Segment。
+      // 在遍历过程中，同时不满足以上3个条件的所有日志段都是可以被删除的！
       while (segmentEntry != null) {
         val segment = segmentEntry.getValue
         val nextSegmentEntry = segments.higherEntry(segmentEntry.getKey)
@@ -1745,13 +1854,15 @@ class Log(@volatile var dir: File,
   }
 
   /**
-   * If topic deletion is enabled, delete any log segments that have either expired due to time based retention
-   * or because the log size is > retentionSize.
-   *
-   * Whether or not deletion is enabled, delete any log segments that are before the log start offset
-   */
+    * If topic deletion is enabled, delete any log segments that have either expired due to time based retention
+    * or because the log size is > retentionSize.
+    *
+    * Whether or not deletion is enabled, delete any log segments that are before the log start offset
+    * Log 中控制删除操作的总入口是 deleteOldSegments 无参方法
+    */
   def deleteOldSegments(): Int = {
     if (config.delete) {
+      //分别对应于 3 个留存策略 【基于时间维度的】、【基于空间维度】的和【基于 Log Start Offset 维度】
       deleteRetentionMsBreachedSegments() + deleteRetentionSizeBreachedSegments() + deleteLogStartOffsetBreachedSegments()
     } else {
       deleteLogStartOffsetBreachedSegments()
@@ -1768,6 +1879,7 @@ class Log(@volatile var dir: File,
   private def deleteRetentionSizeBreachedSegments(): Int = {
     if (config.retentionSize < 0 || size < config.retentionSize) return 0
     var diff = size - config.retentionSize
+
     def shouldDelete(segment: LogSegment, nextSegmentOpt: Option[LogSegment]) = {
       if (diff - segment.size >= 0) {
         diff -= segment.size
@@ -1790,34 +1902,34 @@ class Log(@volatile var dir: File,
   def isFuture: Boolean = dir.getName.endsWith(Log.FutureDirSuffix)
 
   /**
-   * The size of the log in bytes
-   */
+    * The size of the log in bytes
+    */
   def size: Long = Log.sizeInBytes(logSegments)
 
   /**
-   * The offset metadata of the next message that will be appended to the log
-   */
+    * The offset metadata of the next message that will be appended to the log
+    */
   def logEndOffsetMetadata: LogOffsetMetadata = nextOffsetMetadata
 
   /**
-   * The offset of the next message that will be appended to the log
-   */
+    * The offset of the next message that will be appended to the log
+    */
   def logEndOffset: Long = nextOffsetMetadata.messageOffset
 
   /**
-   * Roll the log over to a new empty log segment if necessary.
-   *
-   * @param messagesSize The messages set size in bytes.
-   * @param appendInfo log append information
-   * logSegment will be rolled if one of the following conditions met
-   * <ol>
-   * <li> The logSegment is full
-   * <li> The maxTime has elapsed since the timestamp of first message in the segment (or since the create time if
-   * the first message does not have a timestamp)
-   * <li> The index is full
-   * </ol>
-   * @return The currently active segment after (perhaps) rolling to a new segment
-   */
+    * Roll the log over to a new empty log segment if necessary.
+    *
+    * @param messagesSize The messages set size in bytes.
+    * @param appendInfo   log append information
+    *                     logSegment will be rolled if one of the following conditions met
+    *                     <ol>
+    *                     <li> The logSegment is full
+    *                     <li> The maxTime has elapsed since the timestamp of first message in the segment (or since the create time if
+    *                     the first message does not have a timestamp)
+    *                     <li> The index is full
+    *                     </ol>
+    * @return The currently active segment after (perhaps) rolling to a new segment
+    */
   private def maybeRoll(messagesSize: Int, appendInfo: LogAppendInfo): LogSegment = {
     val segment = activeSegment
     val now = time.milliseconds
@@ -1853,11 +1965,11 @@ class Log(@volatile var dir: File,
   }
 
   /**
-   * Roll the log over to a new active segment starting with the current logEndOffset.
-   * This will trim the index to the exact size of the number of entries it currently contains.
-   *
-   * @return The newly rolled segment
-   */
+    * Roll the log over to a new active segment starting with the current logEndOffset.
+    * This will trim the index to the exact size of the number of entries it currently contains.
+    *
+    * @return The newly rolled segment
+    */
   def roll(expectedNextOffset: Option[Long] = None): LogSegment = {
     maybeHandleIOException(s"Error while rolling log segment for $topicPartition in dir ${dir.getParent}") {
       val start = time.hiResClockMs()
@@ -1872,19 +1984,19 @@ class Log(@volatile var dir: File,
             // We have seen this happen (see KAFKA-6388) after shouldRoll() returns true for an
             // active segment of size zero because of one of the indexes is "full" (due to _maxEntries == 0).
             warn(s"Trying to roll a new log segment with start offset $newOffset " +
-                 s"=max(provided offset = $expectedNextOffset, LEO = $logEndOffset) while it already " +
-                 s"exists and is active with size 0. Size of time index: ${activeSegment.timeIndex.entries}," +
-                 s" size of offset index: ${activeSegment.offsetIndex.entries}.")
+              s"=max(provided offset = $expectedNextOffset, LEO = $logEndOffset) while it already " +
+              s"exists and is active with size 0. Size of time index: ${activeSegment.timeIndex.entries}," +
+              s" size of offset index: ${activeSegment.offsetIndex.entries}.")
             removeAndDeleteSegments(Seq(activeSegment), asyncDelete = true)
           } else {
             throw new KafkaException(s"Trying to roll a new log segment for topic partition $topicPartition with start offset $newOffset" +
-                                     s" =max(provided offset = $expectedNextOffset, LEO = $logEndOffset) while it already exists. Existing " +
-                                     s"segment is ${segments.get(newOffset)}.")
+              s" =max(provided offset = $expectedNextOffset, LEO = $logEndOffset) while it already exists. Existing " +
+              s"segment is ${segments.get(newOffset)}.")
           }
         } else if (!segments.isEmpty && newOffset < activeSegment.baseOffset) {
           throw new KafkaException(
             s"Trying to roll a new log segment for topic partition $topicPartition with " +
-            s"start offset $newOffset =max(provided offset = $expectedNextOffset, LEO = $logEndOffset) lower than start offset of the active segment $activeSegment")
+              s"start offset $newOffset =max(provided offset = $expectedNextOffset, LEO = $logEndOffset) lower than start offset of the active segment $activeSegment")
         } else {
           val offsetIdxFile = offsetIndexFile(dir, newOffset)
           val timeIdxFile = timeIndexFile(dir, newOffset)
@@ -1930,20 +2042,20 @@ class Log(@volatile var dir: File,
   }
 
   /**
-   * The number of messages appended to the log since the last flush
-   */
+    * The number of messages appended to the log since the last flush
+    */
   def unflushedMessages: Long = this.logEndOffset - this.recoveryPoint
 
   /**
-   * Flush all log segments
-   */
+    * Flush all log segments
+    */
   def flush(): Unit = flush(this.logEndOffset)
 
   /**
-   * Flush log segments for all offsets up to offset-1
-   *
-   * @param offset The offset to flush up to (non-inclusive); the new recovery point
-   */
+    * Flush log segments for all offsets up to offset-1
+    *
+    * @param offset The offset to flush up to (non-inclusive); the new recovery point
+    */
   def flush(offset: Long): Unit = {
     maybeHandleIOException(s"Error while flushing log for $topicPartition in dir ${dir.getParent} with offset $offset") {
       if (offset <= this.recoveryPoint)
@@ -1964,22 +2076,22 @@ class Log(@volatile var dir: File,
   }
 
   /**
-   * Cleanup old producer snapshots after the recovery point is checkpointed. It is useful to retain
-   * the snapshots from the recent segments in case we need to truncate and rebuild the producer state.
-   * Otherwise, we would always need to rebuild from the earliest segment.
-   *
-   * More specifically:
-   *
-   * 1. We always retain the producer snapshot from the last two segments. This solves the common case
-   * of truncating to an offset within the active segment, and the rarer case of truncating to the previous segment.
-   *
-   * 2. We only delete snapshots for offsets less than the recovery point. The recovery point is checkpointed
-   * periodically and it can be behind after a hard shutdown. Since recovery starts from the recovery point, the logic
-   * of rebuilding the producer snapshots in one pass and without loading older segments is simpler if we always
-   * have a producer snapshot for all segments being recovered.
-   *
-   * Return the minimum snapshots offset that was retained.
-   */
+    * Cleanup old producer snapshots after the recovery point is checkpointed. It is useful to retain
+    * the snapshots from the recent segments in case we need to truncate and rebuild the producer state.
+    * Otherwise, we would always need to rebuild from the earliest segment.
+    *
+    * More specifically:
+    *
+    * 1. We always retain the producer snapshot from the last two segments. This solves the common case
+    * of truncating to an offset within the active segment, and the rarer case of truncating to the previous segment.
+    *
+    * 2. We only delete snapshots for offsets less than the recovery point. The recovery point is checkpointed
+    * periodically and it can be behind after a hard shutdown. Since recovery starts from the recovery point, the logic
+    * of rebuilding the producer snapshots in one pass and without loading older segments is simpler if we always
+    * have a producer snapshot for all segments being recovered.
+    *
+    * Return the minimum snapshots offset that was retained.
+    */
   def deleteSnapshotsAfterRecoveryPointCheckpoint(): Long = {
     val minOffsetToRetain = minSnapshotsOffsetToRetain
     producerStateManager.deleteSnapshotsBefore(minOffsetToRetain)
@@ -2000,8 +2112,8 @@ class Log(@volatile var dir: File,
     Option(segments.lowerEntry(offset)).map(_.getValue)
 
   /**
-   * Completely delete this log directory and all contents from the file system with no delay
-   */
+    * Completely delete this log directory and all contents from the file system with no delay
+    */
   private[log] def delete(): Unit = {
     maybeHandleIOException(s"Error while deleting log for $topicPartition in dir ${dir.getParent}") {
       lock synchronized {
@@ -2039,11 +2151,11 @@ class Log(@volatile var dir: File,
   }
 
   /**
-   * Truncate this log so that it ends with the greatest offset < targetOffset.
-   *
-   * @param targetOffset The offset to truncate to, an upper bound on all offsets in the log after truncation is complete.
-   * @return True iff targetOffset < logEndOffset
-   */
+    * Truncate this log so that it ends with the greatest offset < targetOffset.
+    *
+    * @param targetOffset The offset to truncate to, an upper bound on all offsets in the log after truncation is complete.
+    * @return True iff targetOffset < logEndOffset
+    */
   private[log] def truncateTo(targetOffset: Long): Boolean = {
     maybeHandleIOException(s"Error while truncating log to offset $targetOffset for $topicPartition in dir ${dir.getParent}") {
       if (targetOffset < 0)
@@ -2073,10 +2185,10 @@ class Log(@volatile var dir: File,
   }
 
   /**
-   *  Delete all data in the log and start at the new offset
-   *
-   *  @param newOffset The new offset to start the log with
-   */
+    * Delete all data in the log and start at the new offset
+    *
+    * @param newOffset The new offset to start the log with
+    */
   private[log] def truncateFullyAndStartAt(newOffset: Long): Unit = {
     maybeHandleIOException(s"Error while truncating the entire log for $topicPartition in dir ${dir.getParent}") {
       debug(s"Truncate and start at offset $newOffset")
@@ -2102,24 +2214,24 @@ class Log(@volatile var dir: File,
   }
 
   /**
-   * The time this log is last known to have been fully flushed to disk
-   */
+    * The time this log is last known to have been fully flushed to disk
+    */
   def lastFlushTime: Long = lastFlushedTime.get
 
   /**
-   * The active segment that is currently taking appends
-   */
+    * The active segment that is currently taking appends
+    */
   def activeSegment = segments.lastEntry.getValue
 
   /**
-   * All the log segments in this log ordered from oldest to newest
-   */
+    * All the log segments in this log ordered from oldest to newest
+    */
   def logSegments: Iterable[LogSegment] = segments.values.asScala
 
   /**
-   * Get all segments beginning with the segment that includes "from" and ending with the segment
-   * that includes up to "to-1" or the end of the log (if to > logEndOffset)
-   */
+    * Get all segments beginning with the segment that includes "from" and ending with the segment
+    * that includes up to "to-1" or the end of the log (if to > logEndOffset)
+    */
   def logSegments(from: Long, to: Long): Iterable[LogSegment] = {
     lock synchronized {
       val view = Option(segments.floorKey(from)).map { floor =>
@@ -2142,9 +2254,10 @@ class Log(@volatile var dir: File,
   }
 
   /**
-   * Get the largest log segment with a base offset less than or equal to the given offset, if one exists.
-   * @return the optional log segment
-   */
+    * Get the largest log segment with a base offset less than or equal to the given offset, if one exists.
+    *
+    * @return the optional log segment
+    */
   private def floorLogSegment(offset: Long): Option[LogSegment] = {
     Option(segments.floorEntry(offset)).map(_.getValue)
   }
@@ -2163,21 +2276,21 @@ class Log(@volatile var dir: File,
   }
 
   /**
-   * This method deletes the given log segments by doing the following for each of them:
-   * <ol>
-   *   <li>It removes the segment from the segment map so that it will no longer be used for reads.
-   *   <li>It renames the index and log files by appending .deleted to the respective file name
-   *   <li>It can either schedule an asynchronous delete operation to occur in the future or perform the deletion synchronously
-   * </ol>
-   * Asynchronous deletion allows reads to happen concurrently without synchronization and without the possibility of
-   * physically deleting a file while it is being read.
-   *
-   * This method does not need to convert IOException to KafkaStorageException because it is either called before all logs are loaded
-   * or the immediate caller will catch and handle IOException
-   *
-   * @param segments The log segments to schedule for deletion
-   * @param asyncDelete Whether the segment files should be deleted asynchronously
-   */
+    * This method deletes the given log segments by doing the following for each of them:
+    * <ol>
+    * <li>It removes the segment from the segment map so that it will no longer be used for reads.
+    * <li>It renames the index and log files by appending .deleted to the respective file name
+    * <li>It can either schedule an asynchronous delete operation to occur in the future or perform the deletion synchronously
+    * </ol>
+    * Asynchronous deletion allows reads to happen concurrently without synchronization and without the possibility of
+    * physically deleting a file while it is being read.
+    *
+    * This method does not need to convert IOException to KafkaStorageException because it is either called before all logs are loaded
+    * or the immediate caller will catch and handle IOException
+    *
+    * @param segments    The log segments to schedule for deletion
+    * @param asyncDelete Whether the segment files should be deleted asynchronously
+    */
   private def removeAndDeleteSegments(segments: Iterable[LogSegment], asyncDelete: Boolean): Unit = {
     lock synchronized {
       // As most callers hold an iterator into the `segments` collection and `removeAndDeleteSegment` mutates it by
@@ -2192,15 +2305,15 @@ class Log(@volatile var dir: File,
   }
 
   /**
-   * Perform physical deletion for the given file. Allows the file to be deleted asynchronously or synchronously.
-   *
-   * This method assumes that the file exists and the method is not thread-safe.
-   *
-   * This method does not need to convert IOException (thrown from changeFileSuffixes) to KafkaStorageException because
-   * it is either called before all logs are loaded or the caller will catch and handle IOException
-   *
-   * @throws IOException if the file can't be renamed and still exists
-   */
+    * Perform physical deletion for the given file. Allows the file to be deleted asynchronously or synchronously.
+    *
+    * This method assumes that the file exists and the method is not thread-safe.
+    *
+    * This method does not need to convert IOException (thrown from changeFileSuffixes) to KafkaStorageException because
+    * it is either called before all logs are loaded or the caller will catch and handle IOException
+    *
+    * @throws IOException if the file can't be renamed and still exists
+    */
   private def deleteSegmentFiles(segments: Iterable[LogSegment], asyncDelete: Boolean): Unit = {
     segments.foreach(_.changeFileSuffixes("", Log.DeletedFileSuffix))
 
@@ -2220,37 +2333,37 @@ class Log(@volatile var dir: File,
   }
 
   /**
-   * Swap one or more new segment in place and delete one or more existing segments in a crash-safe manner. The old
-   * segments will be asynchronously deleted.
-   *
-   * This method does not need to convert IOException to KafkaStorageException because it is either called before all logs are loaded
-   * or the caller will catch and handle IOException
-   *
-   * The sequence of operations is:
-   * <ol>
-   *   <li> Cleaner creates one or more new segments with suffix .cleaned and invokes replaceSegments().
-   *        If broker crashes at this point, the clean-and-swap operation is aborted and
-   *        the .cleaned files are deleted on recovery in loadSegments().
-   *   <li> New segments are renamed .swap. If the broker crashes before all segments were renamed to .swap, the
-   *        clean-and-swap operation is aborted - .cleaned as well as .swap files are deleted on recovery in
-   *        loadSegments(). We detect this situation by maintaining a specific order in which files are renamed from
-   *        .cleaned to .swap. Basically, files are renamed in descending order of offsets. On recovery, all .swap files
-   *        whose offset is greater than the minimum-offset .clean file are deleted.
-   *   <li> If the broker crashes after all new segments were renamed to .swap, the operation is completed, the swap
-   *        operation is resumed on recovery as described in the next step.
-   *   <li> Old segment files are renamed to .deleted and asynchronous delete is scheduled.
-   *        If the broker crashes, any .deleted files left behind are deleted on recovery in loadSegments().
-   *        replaceSegments() is then invoked to complete the swap with newSegment recreated from
-   *        the .swap file and oldSegments containing segments which were not renamed before the crash.
-   *   <li> Swap segment(s) are renamed to replace the existing segments, completing this operation.
-   *        If the broker crashes, any .deleted files which may be left behind are deleted
-   *        on recovery in loadSegments().
-   * </ol>
-   *
-   * @param newSegments The new log segment to add to the log
-   * @param oldSegments The old log segments to delete from the log
-   * @param isRecoveredSwapFile true if the new segment was created from a swap file during recovery after a crash
-   */
+    * Swap one or more new segment in place and delete one or more existing segments in a crash-safe manner. The old
+    * segments will be asynchronously deleted.
+    *
+    * This method does not need to convert IOException to KafkaStorageException because it is either called before all logs are loaded
+    * or the caller will catch and handle IOException
+    *
+    * The sequence of operations is:
+    * <ol>
+    * <li> Cleaner creates one or more new segments with suffix .cleaned and invokes replaceSegments().
+    * If broker crashes at this point, the clean-and-swap operation is aborted and
+    * the .cleaned files are deleted on recovery in loadSegments().
+    * <li> New segments are renamed .swap. If the broker crashes before all segments were renamed to .swap, the
+    * clean-and-swap operation is aborted - .cleaned as well as .swap files are deleted on recovery in
+    * loadSegments(). We detect this situation by maintaining a specific order in which files are renamed from
+    * .cleaned to .swap. Basically, files are renamed in descending order of offsets. On recovery, all .swap files
+    * whose offset is greater than the minimum-offset .clean file are deleted.
+    * <li> If the broker crashes after all new segments were renamed to .swap, the operation is completed, the swap
+    * operation is resumed on recovery as described in the next step.
+    * <li> Old segment files are renamed to .deleted and asynchronous delete is scheduled.
+    * If the broker crashes, any .deleted files left behind are deleted on recovery in loadSegments().
+    * replaceSegments() is then invoked to complete the swap with newSegment recreated from
+    * the .swap file and oldSegments containing segments which were not renamed before the crash.
+    * <li> Swap segment(s) are renamed to replace the existing segments, completing this operation.
+    * If the broker crashes, any .deleted files which may be left behind are deleted
+    * on recovery in loadSegments().
+    * </ol>
+    *
+    * @param newSegments         The new log segment to add to the log
+    * @param oldSegments         The old log segments to delete from the log
+    * @param isRecoveredSwapFile true if the new segment was created from a swap file during recovery after a crash
+    */
   private[log] def replaceSegments(newSegments: Seq[LogSegment], oldSegments: Seq[LogSegment], isRecoveredSwapFile: Boolean = false): Unit = {
     lock synchronized {
       val sortedNewSegments = newSegments.sortBy(_.baseOffset)
@@ -2294,8 +2407,8 @@ class Log(@volatile var dir: File,
   }
 
   /**
-   * remove deleted log metrics
-   */
+    * remove deleted log metrics
+    */
   private[log] def removeLogMetrics(): Unit = {
     removeMetric(LogMetricNames.NumLogSegments, tags)
     removeMetric(LogMetricNames.LogStartOffset, tags)
@@ -2304,9 +2417,11 @@ class Log(@volatile var dir: File,
   }
 
   /**
-   * Add the given segment to the segments in this log. If this segment replaces an existing segment, delete it.
-   * @param segment The segment to add
-   */
+    * Add the given segment to the segments in this log. If this segment replaces an existing segment, delete it.
+    * 添加日志段
+    *
+    * @param segment The segment to add
+    */
   @threadsafe
   def addSegment(segment: LogSegment): LogSegment = this.segments.put(segment.baseOffset, segment)
 
@@ -2334,18 +2449,19 @@ class Log(@volatile var dir: File,
   }
 
   /**
-   * Split a segment into one or more segments such that there is no offset overflow in any of them. The
-   * resulting segments will contain the exact same messages that are present in the input segment. On successful
-   * completion of this method, the input segment will be deleted and will be replaced by the resulting new segments.
-   * See replaceSegments for recovery logic, in case the broker dies in the middle of this operation.
-   * <p>Note that this method assumes we have already determined that the segment passed in contains records that cause
-   * offset overflow.</p>
-   * <p>The split logic overloads the use of .clean files that LogCleaner typically uses to make the process of replacing
-   * the input segment with multiple new segments atomic and recoverable in the event of a crash. See replaceSegments
-   * and completeSwapOperations for the implementation to make this operation recoverable on crashes.</p>
-   * @param segment Segment to split
-   * @return List of new segments that replace the input segment
-   */
+    * Split a segment into one or more segments such that there is no offset overflow in any of them. The
+    * resulting segments will contain the exact same messages that are present in the input segment. On successful
+    * completion of this method, the input segment will be deleted and will be replaced by the resulting new segments.
+    * See replaceSegments for recovery logic, in case the broker dies in the middle of this operation.
+    * <p>Note that this method assumes we have already determined that the segment passed in contains records that cause
+    * offset overflow.</p>
+    * <p>The split logic overloads the use of .clean files that LogCleaner typically uses to make the process of replacing
+    * the input segment with multiple new segments atomic and recoverable in the event of a crash. See replaceSegments
+    * and completeSwapOperations for the implementation to make this operation recoverable on crashes.</p>
+    *
+    * @param segment Segment to split
+    * @return List of new segments that replace the input segment
+    */
   private[log] def splitOverflowedSegment(segment: LogSegment): List[LogSegment] = {
     require(isLogFile(segment.log.file), s"Cannot split file ${segment.log.file.getAbsoluteFile}")
     require(segment.hasOverflow, "Split operation is only permitted for segments with overflow")
@@ -2398,10 +2514,13 @@ class Log(@volatile var dir: File,
 }
 
 /**
- * Helper functions for logs
- */
+  * Helper functions for logs
+  */
 object Log {
 
+  /**
+    * 以下是kafka所有可能生成的文件类型
+    */
   /** a log file */
   val LogFileSuffix = ".log"
 
@@ -2411,33 +2530,33 @@ object Log {
   /** a time index file */
   val TimeIndexFileSuffix = ".timeindex"
 
-  val ProducerSnapshotFileSuffix = ".snapshot"
+  val ProducerSnapshotFileSuffix = ".snapshot" //幂等事务使用的文件
 
   /** an (aborted) txn index */
   val TxnIndexFileSuffix = ".txnindex"
 
   /** a file that is scheduled to be deleted */
-  val DeletedFileSuffix = ".deleted"
+  val DeletedFileSuffix = ".deleted" //删除日志段文件 是从.log文件修改过来
 
   /** A temporary file that is being used for log cleaning */
-  val CleanedFileSuffix = ".cleaned"
+  val CleanedFileSuffix = ".cleaned" // Compaction 操作的产物
 
   /** A temporary file used when swapping files into the log */
-  val SwapFileSuffix = ".swap"
+  val SwapFileSuffix = ".swap" //Compaction 操作的产物
 
   /** Clean shutdown file that indicates the broker was cleanly shutdown in 0.8 and higher.
-   * This is used to avoid unnecessary recovery after a clean shutdown. In theory this could be
-   * avoided by passing in the recovery point, however finding the correct position to do this
-   * requires accessing the offset index which may not be safe in an unclean shutdown.
-   * For more information see the discussion in PR#2104
-   */
+    * This is used to avoid unnecessary recovery after a clean shutdown. In theory this could be
+    * avoided by passing in the recovery point, however finding the correct position to do this
+    * requires accessing the offset index which may not be safe in an unclean shutdown.
+    * For more information see the discussion in PR#2104
+    */
   val CleanShutdownFile = ".kafka_cleanshutdown"
 
   /** a directory that is scheduled to be deleted */
-  val DeleteDirSuffix = "-delete"
+  val DeleteDirSuffix = "-delete" //当有partition被删除的时候，分区文件夹会加上这个后缀
 
   /** a directory that is used for future partition */
-  val FutureDirSuffix = "-future"
+  val FutureDirSuffix = "-future" // 用于变更主题分区文件夹地址
 
   private[log] val DeleteDirPattern = Pattern.compile(s"^(\\S+)-(\\S+)\\.(\\S+)$DeleteDirSuffix")
   private[log] val FutureDirPattern = Pattern.compile(s"^(\\S+)-(\\S+)\\.(\\S+)$FutureDirSuffix")
@@ -2461,12 +2580,13 @@ object Log {
   }
 
   /**
-   * Make log segment file name from offset bytes. All this does is pad out the offset number with zeros
-   * so that ls sorts the files numerically.
-   *
-   * @param offset The offset to use in the file name
-   * @return The filename
-   */
+    * 通过给定的位移值计算出对应的日志段文件名，中间使用0填充20位长度
+    * Make log segment file name from offset bytes. All this does is pad out the offset number with zeros
+    * so that ls sorts the files numerically.
+    *
+    * @param offset The offset to use in the file name
+    * @return The filename
+    */
   def filenamePrefixFromOffset(offset: Long): String = {
     val nf = NumberFormat.getInstance()
     nf.setMinimumIntegerDigits(20)
@@ -2476,21 +2596,21 @@ object Log {
   }
 
   /**
-   * Construct a log file name in the given dir with the given base offset and the given suffix
-   *
-   * @param dir The directory in which the log will reside
-   * @param offset The base offset of the log file
-   * @param suffix The suffix to be appended to the file name (e.g. "", ".deleted", ".cleaned", ".swap", etc.)
-   */
+    * Construct a log file name in the given dir with the given base offset and the given suffix
+    *
+    * @param dir    The directory in which the log will reside
+    * @param offset The base offset of the log file
+    * @param suffix The suffix to be appended to the file name (e.g. "", ".deleted", ".cleaned", ".swap", etc.)
+    */
   def logFile(dir: File, offset: Long, suffix: String = ""): File =
     new File(dir, filenamePrefixFromOffset(offset) + LogFileSuffix + suffix)
 
   /**
-   * Return a directory name to rename the log directory to for async deletion.
-   * The name will be in the following format: "topic-partitionId.uniqueId-delete".
-   * If the topic name is too long, it will be truncated to prevent the total name
-   * from exceeding 255 characters.
-   */
+    * Return a directory name to rename the log directory to for async deletion.
+    * The name will be in the following format: "topic-partitionId.uniqueId-delete".
+    * If the topic name is too long, it will be truncated to prevent the total name
+    * from exceeding 255 characters.
+    */
   def logDeleteDirName(topicPartition: TopicPartition): String = {
     val uniqueId = java.util.UUID.randomUUID.toString.replaceAll("-", "")
     val suffix = s"-${topicPartition.partition()}.${uniqueId}${DeleteDirSuffix}"
@@ -2499,9 +2619,9 @@ object Log {
   }
 
   /**
-   * Return a future directory name for the given topic partition. The name will be in the following
-   * format: topic-partition.uniqueId-future where topic, partition and uniqueId are variables.
-   */
+    * Return a future directory name for the given topic partition. The name will be in the following
+    * format: topic-partition.uniqueId-future where topic, partition and uniqueId are variables.
+    */
   def logFutureDirName(topicPartition: TopicPartition): String = {
     logDirNameWithSuffix(topicPartition, FutureDirSuffix)
   }
@@ -2512,30 +2632,30 @@ object Log {
   }
 
   /**
-   * Return a directory name for the given topic partition. The name will be in the following
-   * format: topic-partition where topic, partition are variables.
-   */
+    * Return a directory name for the given topic partition. The name will be in the following
+    * format: topic-partition where topic, partition are variables.
+    */
   def logDirName(topicPartition: TopicPartition): String = {
     s"${topicPartition.topic}-${topicPartition.partition}"
   }
 
   /**
-   * Construct an index file name in the given dir using the given base offset and the given suffix
-   *
-   * @param dir The directory in which the log will reside
-   * @param offset The base offset of the log file
-   * @param suffix The suffix to be appended to the file name ("", ".deleted", ".cleaned", ".swap", etc.)
-   */
+    * Construct an index file name in the given dir using the given base offset and the given suffix
+    *
+    * @param dir    The directory in which the log will reside
+    * @param offset The base offset of the log file
+    * @param suffix The suffix to be appended to the file name ("", ".deleted", ".cleaned", ".swap", etc.)
+    */
   def offsetIndexFile(dir: File, offset: Long, suffix: String = ""): File =
     new File(dir, filenamePrefixFromOffset(offset) + IndexFileSuffix + suffix)
 
   /**
-   * Construct a time index file name in the given dir using the given base offset and the given suffix
-   *
-   * @param dir The directory in which the log will reside
-   * @param offset The base offset of the log file
-   * @param suffix The suffix to be appended to the file name ("", ".deleted", ".cleaned", ".swap", etc.)
-   */
+    * Construct a time index file name in the given dir using the given base offset and the given suffix
+    *
+    * @param dir    The directory in which the log will reside
+    * @param offset The base offset of the log file
+    * @param suffix The suffix to be appended to the file name ("", ".deleted", ".cleaned", ".swap", etc.)
+    */
   def timeIndexFile(dir: File, offset: Long, suffix: String = ""): File =
     new File(dir, filenamePrefixFromOffset(offset) + TimeIndexFileSuffix + suffix)
 
@@ -2543,21 +2663,21 @@ object Log {
     Files.deleteIfExists(new File(file.getPath + suffix).toPath)
 
   /**
-   * Construct a producer id snapshot file using the given offset.
-   *
-   * @param dir The directory in which the log will reside
-   * @param offset The last offset (exclusive) included in the snapshot
-   */
+    * Construct a producer id snapshot file using the given offset.
+    *
+    * @param dir    The directory in which the log will reside
+    * @param offset The last offset (exclusive) included in the snapshot
+    */
   def producerSnapshotFile(dir: File, offset: Long): File =
     new File(dir, filenamePrefixFromOffset(offset) + ProducerSnapshotFileSuffix)
 
   /**
-   * Construct a transaction index file name in the given dir using the given base offset and the given suffix
-   *
-   * @param dir The directory in which the log will reside
-   * @param offset The base offset of the log file
-   * @param suffix The suffix to be appended to the file name ("", ".deleted", ".cleaned", ".swap", etc.)
-   */
+    * Construct a transaction index file name in the given dir using the given base offset and the given suffix
+    *
+    * @param dir    The directory in which the log will reside
+    * @param offset The base offset of the log file
+    * @param suffix The suffix to be appended to the file name ("", ".deleted", ".cleaned", ".swap", etc.)
+    */
   def transactionIndexFile(dir: File, offset: Long, suffix: String = ""): File =
     new File(dir, filenamePrefixFromOffset(offset) + TxnIndexFileSuffix + suffix)
 
@@ -2570,17 +2690,17 @@ object Log {
   }
 
   /**
-   * Calculate a log's size (in bytes) based on its log segments
-   *
-   * @param segments The log segments to calculate the size of
-   * @return Sum of the log segments' sizes (in bytes)
-   */
+    * Calculate a log's size (in bytes) based on its log segments
+    *
+    * @param segments The log segments to calculate the size of
+    * @return Sum of the log segments' sizes (in bytes)
+    */
   def sizeInBytes(segments: Iterable[LogSegment]): Long =
     segments.map(_.size.toLong).sum
 
   /**
-   * Parse the topic and partition out of the directory name of a log
-   */
+    * Parse the topic and partition out of the directory name of a log
+    */
   def parseTopicPartitionName(dir: File): TopicPartition = {
     if (dir == null)
       throw new KafkaException("dir should not be null")
@@ -2595,7 +2715,7 @@ object Log {
     if (dirName == null || dirName.isEmpty || !dirName.contains('-'))
       throw exception(dir)
     if (dirName.endsWith(DeleteDirSuffix) && !DeleteDirPattern.matcher(dirName).matches ||
-        dirName.endsWith(FutureDirSuffix) && !FutureDirPattern.matcher(dirName).matches)
+      dirName.endsWith(FutureDirSuffix) && !FutureDirPattern.matcher(dirName).matches)
       throw exception(dir)
 
     val name: String =
@@ -2610,7 +2730,9 @@ object Log {
 
     val partition =
       try partitionString.toInt
-      catch { case _: NumberFormatException => throw exception(dir) }
+      catch {
+        case _: NumberFormatException => throw exception(dir)
+      }
 
     new TopicPartition(topic, partition)
   }
