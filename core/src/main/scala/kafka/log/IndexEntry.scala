@@ -31,8 +31,8 @@ sealed trait IndexEntry {
  * given offset.
  */
 case class OffsetPosition(offset: Long, position: Int) extends IndexEntry {
-  override def indexKey = offset
-  override def indexValue = position.toLong
+  override def indexKey = offset //相对于 baseOffset 的相对位移值，即真实位移值减去 baseOffset 的值
+  override def indexValue = position.toLong //绝对位移值
 }
 
 

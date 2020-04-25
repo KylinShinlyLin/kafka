@@ -1,19 +1,19 @@
 /**
- * Licensed to the Apache Software Foundation (ASF) under one or more
- * contributor license agreements.  See the NOTICE file distributed with
- * this work for additional information regarding copyright ownership.
- * The ASF licenses this file to You under the Apache License, Version 2.0
- * (the "License"); you may not use this file except in compliance with
- * the License.  You may obtain a copy of the License at
- *
- *    http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- */
+  * Licensed to the Apache Software Foundation (ASF) under one or more
+  * contributor license agreements.  See the NOTICE file distributed with
+  * this work for additional information regarding copyright ownership.
+  * The ASF licenses this file to You under the Apache License, Version 2.0
+  * (the "License"); you may not use this file except in compliance with
+  * the License.  You may obtain a copy of the License at
+  *
+  * http://www.apache.org/licenses/LICENSE-2.0
+  *
+  * Unless required by applicable law or agreed to in writing, software
+  * distributed under the License is distributed on an "AS IS" BASIS,
+  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+  * See the License for the specific language governing permissions and
+  * limitations under the License.
+  */
 
 package kafka.log
 
@@ -30,19 +30,22 @@ import kafka.utils.{CoreUtils, Logging}
 import org.apache.kafka.common.utils.{ByteBufferUnmapper, OperatingSystem, Utils}
 
 /**
- * The abstract index class which holds entry format agnostic methods.
- *
- * @param file The index file
- * @param baseOffset the base offset of the segment that this index is corresponding to.
- * @param maxIndexSize The maximum index size in bytes.
- */
+  * The abstract index class which holds entry format agnostic methods.
+  *
+  * @param file         索引文件（可变）  The index file
+  * @param baseOffset   起始位移值 the base offset of the segment that this index is corresponding to.
+  * @param maxIndexSize 索引文件最大字节数 [segment.index.bytes] The maximum index size in bytes.
+  * @param writable     索引文件打卡方式
+  */
 abstract class AbstractIndex(@volatile var file: File, val baseOffset: Long, val maxIndexSize: Int = -1,
                              val writable: Boolean) extends Closeable {
+
   import AbstractIndex._
 
   // Length of the index file
   @volatile
   private var _length: Long = _
+
   protected def entrySize: Int
 
   /*
@@ -108,18 +111,24 @@ abstract class AbstractIndex(@volatile var file: File, val baseOffset: Long, val
 
   @volatile
   protected var mmap: MappedByteBuffer = {
+    // 第1步：创建索引文件
     val newlyCreated = file.createNewFile()
+    // 第2步：以writable指定的方式（读写方式或只读方式）打开索引文件
     val raf = if (writable) new RandomAccessFile(file, "rw") else new RandomAccessFile(file, "r")
     try {
       /* pre-allocate the file if necessary */
-      if(newlyCreated) {
-        if(maxIndexSize < entrySize)
+      if (newlyCreated) {
+        if (maxIndexSize < entrySize) // 预设的索引文件大小不能太小，如果连一个索引项都保存不了，直接抛出异常
           throw new IllegalArgumentException("Invalid max index size: " + maxIndexSize)
+        // 第3步：设置索引文件长度，roundDownToExactMultiple计算的是不超过maxIndexSize的最大整数倍entrySize
+        // 比如maxIndexSize=1234567，entrySize=8，那么调整后的文件长度为1234560
         raf.setLength(roundDownToExactMultiple(maxIndexSize, entrySize))
       }
 
       /* memory-map the file */
+      // 第4步：更新索引长度字段_length
       _length = raf.length()
+      // 第5步：创建MappedByteBuffer对象
       val idx = {
         if (writable)
           raf.getChannel.map(FileChannel.MapMode.READ_WRITE, 0, _length)
@@ -127,30 +136,36 @@ abstract class AbstractIndex(@volatile var file: File, val baseOffset: Long, val
           raf.getChannel.map(FileChannel.MapMode.READ_ONLY, 0, _length)
       }
       /* set the position in the index for the next entry */
-      if(newlyCreated)
+      // 第6步：如果是新创建的索引文件，将MappedByteBuffer对象的当前位置置成0
+      // 如果索引文件已存在，将MappedByteBuffer对象的当前位置设置成最后一个索引项所在的位置
+      if (newlyCreated)
         idx.position(0)
       else
-        // if this is a pre-existing index, assume it is valid and set position to last entry
+      // if this is a pre-existing index, assume it is valid and set position to last entry
         idx.position(roundDownToExactMultiple(idx.limit(), entrySize))
+      // 第7步：返回创建的MappedByteBuffer对象
       idx
     } finally {
-      CoreUtils.swallow(raf.close(), AbstractIndex)
+      CoreUtils.swallow(raf.close(), AbstractIndex) // 关闭打开索引文件句柄
     }
   }
 
   /**
-   * The maximum number of entries this index can hold
-   */
+    * The maximum number of entries this index can hold
+    */
+  //计算索引文件最多能容纳多少个索引项
   @volatile
   private[this] var _maxEntries: Int = mmap.limit() / entrySize
 
   /** The number of entries in this index */
+  //计算索引对象中当前有多少个索引项
   @volatile
   protected var _entries: Int = mmap.position() / entrySize
 
   /**
-   * True iff there are no more slots available in this index
-   */
+    * True iff there are no more slots available in this index
+    */
+  //判断当前索引文件是否已经写满
   def isFull: Boolean = _entries >= _maxEntries
 
   def maxEntries: Int = _maxEntries
@@ -160,14 +175,14 @@ abstract class AbstractIndex(@volatile var file: File, val baseOffset: Long, val
   def length: Long = _length
 
   /**
-   * Reset the size of the memory map and the underneath file. This is used in two kinds of cases: (1) in
-   * trimToValidSize() which is called at closing the segment or new segment being rolled; (2) at
-   * loading segments from disk or truncating back to an old segment where a new log segment became active;
-   * we want to reset the index size to maximum index size to avoid rolling new segment.
-   *
-   * @param newSize new size of the index file
-   * @return a boolean indicating whether the size of the memory map and the underneath file is changed or not.
-   */
+    * Reset the size of the memory map and the underneath file. This is used in two kinds of cases: (1) in
+    * trimToValidSize() which is called at closing the segment or new segment being rolled; (2) at
+    * loading segments from disk or truncating back to an old segment where a new log segment became active;
+    * we want to reset the index size to maximum index size to avoid rolling new segment.
+    *
+    * @param newSize new size of the index file
+    * @return a boolean indicating whether the size of the memory map and the underneath file is changed or not.
+    */
   def resize(newSize: Int): Boolean = {
     inLock(lock) {
       val roundedNewSize = roundDownToExactMultiple(newSize, entrySize)
@@ -199,18 +214,18 @@ abstract class AbstractIndex(@volatile var file: File, val baseOffset: Long, val
   }
 
   /**
-   * Rename the file that backs this offset index
-   *
-   * @throws IOException if rename fails
-   */
+    * Rename the file that backs this offset index
+    *
+    * @throws IOException if rename fails
+    */
   def renameTo(f: File): Unit = {
     try Utils.atomicMoveWithFallback(file.toPath, f.toPath)
     finally file = f
   }
 
   /**
-   * Flush the data in the index to disk
-   */
+    * Flush the data in the index to disk
+    */
   def flush(): Unit = {
     inLock(lock) {
       mmap.force()
@@ -218,21 +233,21 @@ abstract class AbstractIndex(@volatile var file: File, val baseOffset: Long, val
   }
 
   /**
-   * Delete this index file.
-   *
-   * @throws IOException if deletion fails due to an I/O error
-   * @return `true` if the file was deleted by this method; `false` if the file could not be deleted because it did
-   *         not exist
-   */
+    * Delete this index file.
+    *
+    * @throws IOException if deletion fails due to an I/O error
+    * @return `true` if the file was deleted by this method; `false` if the file could not be deleted because it did
+    *         not exist
+    */
   def deleteIfExists(): Boolean = {
     closeHandler()
     Files.deleteIfExists(file.toPath)
   }
 
   /**
-   * Trim this segment to fit just the valid entries, deleting all trailing unwritten bytes from
-   * the file.
-   */
+    * Trim this segment to fit just the valid entries, deleting all trailing unwritten bytes from
+    * the file.
+    */
   def trimToValidSize(): Unit = {
     inLock(lock) {
       resize(entrySize * _entries)
@@ -240,8 +255,8 @@ abstract class AbstractIndex(@volatile var file: File, val baseOffset: Long, val
   }
 
   /**
-   * The number of bytes actually used by this index
-   */
+    * The number of bytes actually used by this index
+    */
   def sizeInBytes: Int = entrySize * _entries
 
   /** Close the index */
@@ -261,35 +276,36 @@ abstract class AbstractIndex(@volatile var file: File, val baseOffset: Long, val
   }
 
   /**
-   * Do a basic sanity check on this index to detect obvious problems
-   *
-   * @throws CorruptIndexException if any problems are found
-   */
+    * Do a basic sanity check on this index to detect obvious problems
+    *
+    * @throws CorruptIndexException if any problems are found
+    */
   def sanityCheck(): Unit
 
   /**
-   * Remove all the entries from the index.
-   */
+    * Remove all the entries from the index.
+    */
   protected def truncate(): Unit
 
   /**
-   * Remove all entries from the index which have an offset greater than or equal to the given offset.
-   * Truncating to an offset larger than the largest in the index has no effect.
-   */
+    * Remove all entries from the index which have an offset greater than or equal to the given offset.
+    * Truncating to an offset larger than the largest in the index has no effect.
+    */
   def truncateTo(offset: Long): Unit
 
   /**
-   * Remove all the entries from the index and resize the index to the max index size.
-   */
+    * Remove all the entries from the index and resize the index to the max index size.
+    */
   def reset(): Unit = {
     truncate()
     resize(maxIndexSize)
   }
 
   /**
-   * Get offset relative to base offset of this index
-   * @throws IndexOffsetOverflowException
-   */
+    * Get offset relative to base offset of this index
+    *
+    * @throws IndexOffsetOverflowException
+    */
   def relativeOffset(offset: Long): Int = {
     val relativeOffset = toRelative(offset)
     if (relativeOffset.isEmpty)
@@ -298,10 +314,11 @@ abstract class AbstractIndex(@volatile var file: File, val baseOffset: Long, val
   }
 
   /**
-   * Check if a particular offset is valid to be appended to this index.
-   * @param offset The offset to check
-   * @return true if this offset is valid to be appended to this index; false otherwise
-   */
+    * Check if a particular offset is valid to be appended to this index.
+    *
+    * @param offset The offset to check
+    * @return true if this offset is valid to be appended to this index; false otherwise
+    */
   def canAppendOffset(offset: Long): Boolean = {
     toRelative(offset).isDefined
   }
@@ -314,18 +331,18 @@ abstract class AbstractIndex(@volatile var file: File, val baseOffset: Long, val
   }
 
   /**
-   * Forcefully free the buffer's mmap.
-   */
+    * Forcefully free the buffer's mmap.
+    */
   protected[log] def forceUnmap(): Unit = {
     try ByteBufferUnmapper.unmap(file.getAbsolutePath, mmap)
     finally mmap = null // Accessing unmapped mmap crashes JVM by SEGV so we null it out to be safe
   }
 
   /**
-   * Execute the given function in a lock only if we are running on windows. We do this
-   * because Windows won't let us resize a file while it is mmapped. As a result we have to force unmap it
-   * and this requires synchronizing reads.
-   */
+    * Execute the given function in a lock only if we are running on windows. We do this
+    * because Windows won't let us resize a file while it is mmapped. As a result we have to force unmap it
+    * and this requires synchronizing reads.
+    */
   protected def maybeLock[T](lock: Lock)(fun: => T): T = {
     if (OperatingSystem.IS_WINDOWS)
       lock.lock()
@@ -337,50 +354,54 @@ abstract class AbstractIndex(@volatile var file: File, val baseOffset: Long, val
   }
 
   /**
-   * To parse an entry in the index.
-   *
-   * @param buffer the buffer of this memory mapped index.
-   * @param n the slot
-   * @return the index entry stored in the given slot.
-   */
+    * To parse an entry in the index.
+    *
+    * @param buffer the buffer of this memory mapped index.
+    * @param n      the slot
+    * @return the index entry stored in the given slot.
+    */
   protected def parseEntry(buffer: ByteBuffer, n: Int): IndexEntry
 
   /**
-   * Find the slot in which the largest entry less than or equal to the given target key or value is stored.
-   * The comparison is made using the `IndexEntry.compareTo()` method.
-   *
-   * @param idx The index buffer
-   * @param target The index key to look for
-   * @return The slot found or -1 if the least entry in the index is larger than the target key or the index is empty
-   */
+    * Find the slot in which the largest entry less than or equal to the given target key or value is stored.
+    * The comparison is made using the `IndexEntry.compareTo()` method.
+    *
+    * @param idx    The index buffer
+    * @param target The index key to look for
+    * @return The slot found or -1 if the least entry in the index is larger than the target key or the index is empty
+    */
   protected def largestLowerBoundSlotFor(idx: ByteBuffer, target: Long, searchEntity: IndexSearchEntity): Int =
     indexSlotRangeFor(idx, target, searchEntity)._1
 
   /**
-   * Find the smallest entry greater than or equal the target key or value. If none can be found, -1 is returned.
-   */
+    * Find the smallest entry greater than or equal the target key or value. If none can be found, -1 is returned.
+    */
   protected def smallestUpperBoundSlotFor(idx: ByteBuffer, target: Long, searchEntity: IndexSearchEntity): Int =
     indexSlotRangeFor(idx, target, searchEntity)._2
 
   /**
-   * Lookup lower and upper bounds for the given target.
-   */
+    * Lookup lower and upper bounds for the given target.
+    * 二分查找
+    */
   private def indexSlotRangeFor(idx: ByteBuffer, target: Long, searchEntity: IndexSearchEntity): (Int, Int) = {
     // check if the index is empty
-    if(_entries == 0)
+    // 第1步：如果当前索引为空，直接返回<-1,-1>对
+    if (_entries == 0)
       return (-1, -1)
 
-    def binarySearch(begin: Int, end: Int) : (Int, Int) = {
+    // 封装原版的二分查找算法
+    def binarySearch(begin: Int, end: Int): (Int, Int) = {
       // binary search for the entry
       var lo = begin
       var hi = end
-      while(lo < hi) {
+      while (lo < hi) {
         val mid = (lo + hi + 1) >>> 1
+        //二分里面使用了mmap，会涉及磁盘读取
         val found = parseEntry(idx, mid)
         val compareResult = compareIndexEntry(found, target, searchEntity)
-        if(compareResult > 0)
+        if (compareResult > 0)
           hi = mid - 1
-        else if(compareResult < 0)
+        else if (compareResult < 0)
           lo = mid
         else
           return (mid, mid)
@@ -388,16 +409,23 @@ abstract class AbstractIndex(@volatile var file: File, val baseOffset: Long, val
       (lo, if (lo == _entries - 1) -1 else lo + 1)
     }
 
+    // 改进了二分查找，通区分冷热区来避免大量加载页缓存的情况
+    // 第3步：确认热区首个索引项位于哪个槽。_warmEntries就是所谓的分割线，目前固定为8192字节处
+    // 如果是OffsetIndex，_warmEntries = 8192 / 8 = 1024，即第1024个槽
+    // 如果是TimeIndex，_warmEntries = 8192 / 12 = 682，即第682个槽
     val firstHotEntry = Math.max(0, _entries - 1 - _warmEntries)
     // check if the target offset is in the warm section of the index
-    if(compareIndexEntry(parseEntry(idx, firstHotEntry), target, searchEntity) < 0) {
-      return binarySearch(firstHotEntry, _entries - 1)
+    // 找当前第一个热区的实体，判断索引对象是否在热区
+    if (compareIndexEntry(parseEntry(idx, firstHotEntry), target, searchEntity) < 0) {
+      return binarySearch(firstHotEntry, _entries - 1) // 如果在热区，搜索热区
     }
 
     // check if the target offset is smaller than the least offset
-    if(compareIndexEntry(parseEntry(idx, 0), target, searchEntity) > 0)
+    // 第5步：确保target位移值不能小于当前最小位移值
+    if (compareIndexEntry(parseEntry(idx, 0), target, searchEntity) > 0)
       return (-1, 0)
 
+    // 第6步：如果在冷区，搜索冷区
     binarySearch(0, firstHotEntry)
   }
 
@@ -409,9 +437,9 @@ abstract class AbstractIndex(@volatile var file: File, val baseOffset: Long, val
   }
 
   /**
-   * Round a number to the greatest exact multiple of the given factor less than the given number.
-   * E.g. roundDownToExactMultiple(67, 8) == 64
-   */
+    * Round a number to the greatest exact multiple of the given factor less than the given number.
+    * E.g. roundDownToExactMultiple(67, 8) == 64
+    */
   private def roundDownToExactMultiple(number: Int, factor: Int) = factor * (number / factor)
 
   private def toRelative(offset: Long): Option[Int] = {
