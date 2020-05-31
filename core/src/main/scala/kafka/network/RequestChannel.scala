@@ -1,19 +1,19 @@
 /**
- * Licensed to the Apache Software Foundation (ASF) under one or more
- * contributor license agreements.  See the NOTICE file distributed with
- * this work for additional information regarding copyright ownership.
- * The ASF licenses this file to You under the Apache License, Version 2.0
- * (the "License"); you may not use this file except in compliance with
- * the License.  You may obtain a copy of the License at
- *
- *    http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- */
+  * Licensed to the Apache Software Foundation (ASF) under one or more
+  * contributor license agreements.  See the NOTICE file distributed with
+  * this work for additional information regarding copyright ownership.
+  * The ASF licenses this file to You under the Apache License, Version 2.0
+  * (the "License"); you may not use this file except in compliance with
+  * the License.  You may obtain a copy of the License at
+  *
+  * http://www.apache.org/licenses/LICENSE-2.0
+  *
+  * Unless required by applicable law or agreed to in writing, software
+  * distributed under the License is distributed on an "AS IS" BASIS,
+  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+  * See the License for the specific language governing permissions and
+  * limitations under the License.
+  */
 
 package kafka.network
 
@@ -27,19 +27,17 @@ import kafka.log.LogConfig
 import kafka.metrics.KafkaMetricsGroup
 import kafka.server.KafkaConfig
 import kafka.utils.{Logging, NotNothing, Pool}
-import org.apache.kafka.common.config.types.Password
 import org.apache.kafka.common.config.ConfigResource
+import org.apache.kafka.common.config.types.Password
 import org.apache.kafka.common.memory.MemoryPool
-import org.apache.kafka.common.message.IncrementalAlterConfigsRequestData
-import org.apache.kafka.common.message.IncrementalAlterConfigsRequestData._
 import org.apache.kafka.common.network.Send
 import org.apache.kafka.common.protocol.{ApiKeys, Errors}
 import org.apache.kafka.common.requests._
 import org.apache.kafka.common.security.auth.KafkaPrincipal
 import org.apache.kafka.common.utils.{Sanitizer, Time}
 
-import scala.collection.mutable
 import scala.collection.JavaConverters._
+import scala.collection.mutable
 import scala.reflect.ClassTag
 
 object RequestChannel extends Logging {
@@ -51,7 +49,10 @@ object RequestChannel extends Logging {
 
   def isRequestLoggingEnabled: Boolean = requestLogger.underlying.isDebugEnabled
 
+  //BaseRequest 相对于是一个接口
   sealed trait BaseRequest
+
+  //ShutdownRequest 关闭请求 其实是一给封装调用 CountDownLatch down的方法
   case object ShutdownRequest extends BaseRequest
 
   case class Session(principal: KafkaPrincipal, clientAddress: InetAddress) {
@@ -63,17 +64,27 @@ object RequestChannel extends Logging {
     private val metricsMap = mutable.Map[String, RequestMetrics]()
 
     (ApiKeys.values.toSeq.map(_.name) ++
-        Seq(RequestMetrics.consumerFetchMetricName, RequestMetrics.followFetchMetricName)).foreach { name =>
+      Seq(RequestMetrics.consumerFetchMetricName, RequestMetrics.followFetchMetricName)).foreach { name =>
       metricsMap.put(name, new RequestMetrics(name))
     }
 
     def apply(metricName: String) = metricsMap(metricName)
 
     def close(): Unit = {
-       metricsMap.values.foreach(_.removeMetrics())
+      metricsMap.values.foreach(_.removeMetrics())
     }
   }
 
+  /**
+    * Request 请求封装
+    *
+    * @param processor      processor线程序号 这个请求是由哪个 Processor 线程接收处理的（Processor 线程仅仅是网络接收线程，不会执行真正的 Request 请求处理逻辑）
+    * @param context        context 是用来标识请求上下文信息的
+    * @param startTimeNanos startTimeNanos 记录了 Request 对象被创建的时间，主要用于各种时间统计指标的计算
+    * @param memoryPool     避免 Request 对象无限使用内存。 实现SimpleMemoryPool
+    * @param buffer         buffer 是真正保存 Request 对象内容的字节缓冲区。Request 发送方必须按照 Kafka RPC 协议规定的格式向该缓冲区写入字节，否则将抛出 InvalidRequestException 异常。这个逻辑主要是由 RequestContext 的 parseRequest 方法实现的。
+    * @param metrics        metrics 是 Request 相关的各种监控指标的一个管理类。它里面构建了一个 Map，封装了所有的请求 JMX 指标
+    */
   class Request(val processor: Int,
                 val context: RequestContext,
                 val startTimeNanos: Long,
@@ -95,6 +106,7 @@ object RequestChannel extends Logging {
     private val bodyAndSize: RequestAndSize = context.parseRequest(buffer)
 
     def header: RequestHeader = context.header
+
     def sizeOfBodyInBytes: Int = bodyAndSize.size
 
     //most request types are parsed entirely into objects at this point. for those we can release the underlying buffer.
@@ -130,7 +142,7 @@ object RequestChannel extends Logging {
         case alterConfigs: AlterConfigsRequest =>
           val loggableConfigs = alterConfigs.configs().asScala.map { case (resource, config) =>
             val loggableEntries = new AlterConfigsRequest.Config(config.entries.asScala.map { entry =>
-                new AlterConfigsRequest.ConfigEntry(entry.name, loggableValue(resource.`type`, entry.name, entry.value))
+              new AlterConfigsRequest.ConfigEntry(entry.name, loggableValue(resource.`type`, entry.name, entry.value))
             }.asJavaCollection)
             (resource, loggableEntries)
           }.asJava
@@ -181,10 +193,10 @@ object RequestChannel extends Logging {
         apiRemoteCompleteTimeNanos = responseCompleteTimeNanos
 
       /**
-       * Converts nanos to millis with micros precision as additional decimal places in the request log have low
-       * signal to noise ratio. When it comes to metrics, there is little difference either way as we round the value
-       * to the nearest long.
-       */
+        * Converts nanos to millis with micros precision as additional decimal places in the request log have low
+        * signal to noise ratio. When it comes to metrics, there is little difference either way as we round the value
+        * to the nearest long.
+        */
       def nanosToMs(nanos: Long): Double = {
         val positiveNanos = math.max(nanos, 0)
         TimeUnit.NANOSECONDS.toMicros(positiveNanos).toDouble / TimeUnit.MILLISECONDS.toMicros(1)
@@ -274,6 +286,12 @@ object RequestChannel extends Logging {
 
   }
 
+  /**
+    * Response 的抽象类
+    * 【SendResponse|NoResponse|CloseConnectionResponse|StartThrottlingResponse|EndThrottlingResponse】
+    *
+    * @param request 对应的请求
+    */
   abstract class Response(val request: Request) {
     locally {
       val nowNs = Time.SYSTEM.nanoseconds
@@ -292,6 +310,13 @@ object RequestChannel extends Logging {
   }
 
   /** responseAsString should only be defined if request logging is enabled */
+  /**
+    *
+    * @param request            对应的请求
+    * @param responseSend       Send接口，表示需要Send的类型
+    * @param responseAsString
+    * @param onCompleteCallback onCompletionCallback，即指定处理完成之后的回调逻辑。
+    */
   class SendResponse(request: Request,
                      val responseSend: Send,
                      val responseAsString: Option[String],
@@ -304,31 +329,65 @@ object RequestChannel extends Logging {
       s"Response(type=Send, request=$request, send=$responseSend, asString=$responseAsString)"
   }
 
+  /**
+    * 不需要相应的请求
+    *
+    * @param request 对应的请求
+    */
   class NoOpResponse(request: Request) extends Response(request) {
     override def toString: String =
       s"Response(type=NoOp, request=$request)"
   }
 
+  /**
+    * 用于出错后需要关闭 TCP 连接的场景，此时返回 CloseConnectionResponse 给 Request 发送方，显式地通知它关闭连接
+    *
+    * @param request 对应的请求
+    */
   class CloseConnectionResponse(request: Request) extends Response(request) {
     override def toString: String =
       s"Response(type=CloseConnection, request=$request)"
   }
 
+  /**
+    * 用于通知 Broker 的 Socket Server 组件（后面几节课我会讲到它）某个 TCP 连接通信通道开始被限流（throttling）。
+    *
+    * @param request 对应的请求
+    */
   class StartThrottlingResponse(request: Request) extends Response(request) {
     override def toString: String =
       s"Response(type=StartThrottling, request=$request)"
   }
 
+  /**
+    * 与 StartThrottlingResponse 对应，通知 Broker 的 SocketServer 组件某个 TCP 连接通信通道的限流已结束。
+    *
+    * @param request 对应的请求
+    */
   class EndThrottlingResponse(request: Request) extends Response(request) {
     override def toString: String =
       s"Response(type=EndThrottling, request=$request)"
   }
+
 }
 
-class RequestChannel(val queueSize: Int, val metricNamePrefix : String) extends KafkaMetricsGroup {
+/**
+  * 请求队列（每个SocketServer对应一个）
+  *
+  * @param queueSize
+  * @param metricNamePrefix
+  */
+class RequestChannel(val queueSize: Int, val metricNamePrefix: String) extends KafkaMetricsGroup {
+
   import RequestChannel._
+
   val metrics = new RequestChannel.Metrics
+  //请求队列 Java 提供的阻塞队列 ArrayBlockingQueue
+  //Broker 端参数 queued.max.requests 赋值给 queueSize 默认：500
   private val requestQueue = new ArrayBlockingQueue[BaseRequest](queueSize)
+  //Processor 线程池
+  //Map 中的 Key 就是前面我们说的 processor 序号，而 Value 则对应具体的 Processor 线程对象
+  //每当 Broker 启动时，它都会调用 addProcessor 方法，向 RequestChannel 对象添加 num.network.threads 个 Processor 线程。
   private val processors = new ConcurrentHashMap[Int, Processor]()
   val requestQueueSizeMetricName = metricNamePrefix.concat(RequestQueueSizeMetric)
   val responseQueueSizeMetricName = metricNamePrefix.concat(ResponseQueueSizeMetric)
@@ -336,7 +395,7 @@ class RequestChannel(val queueSize: Int, val metricNamePrefix : String) extends 
   newGauge(requestQueueSizeMetricName, () => requestQueue.size)
 
   newGauge(responseQueueSizeMetricName, () => {
-    processors.values.asScala.foldLeft(0) {(total, processor) =>
+    processors.values.asScala.foldLeft(0) { (total, processor) =>
       total + processor.responseQueueSize
     }
   })
@@ -461,10 +520,10 @@ class RequestMetrics(name: String) extends KafkaMetricsGroup {
   // Temporary memory allocated for processing request (only populated for fetch and produce requests)
   // This shows the memory allocated for compression/conversions excluding the actual request size
   val tempMemoryBytesHist =
-    if (name == ApiKeys.FETCH.name || name == ApiKeys.PRODUCE.name)
-      Some(newHistogram(TemporaryMemoryBytes, biased = true, tags))
-    else
-      None
+  if (name == ApiKeys.FETCH.name || name == ApiKeys.PRODUCE.name)
+    Some(newHistogram(TemporaryMemoryBytes, biased = true, tags))
+  else
+    None
 
   private val errorMeters = mutable.Map[Errors, ErrorMeter]()
   Errors.values.foreach(error => errorMeters.put(error, new ErrorMeter(name, error)))
@@ -484,7 +543,7 @@ class RequestMetrics(name: String) extends KafkaMetricsGroup {
       else {
         synchronized {
           if (meter == null)
-             meter = newMeter(ErrorsPerSec, "requests", TimeUnit.SECONDS, tags)
+            meter = newMeter(ErrorsPerSec, "requests", TimeUnit.SECONDS, tags)
           meter
         }
       }

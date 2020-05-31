@@ -25,22 +25,26 @@ import org.apache.kafka.common.protocol.ApiKeys;
 import org.apache.kafka.common.protocol.types.Struct;
 import org.apache.kafka.common.security.auth.KafkaPrincipal;
 import org.apache.kafka.common.security.auth.SecurityProtocol;
+import org.apache.kafka.server.authorizer.AuthorizableRequestContext;
 
 import java.net.InetAddress;
 import java.nio.ByteBuffer;
-import org.apache.kafka.server.authorizer.AuthorizableRequestContext;
 
 import static org.apache.kafka.common.protocol.ApiKeys.API_VERSIONS;
 
+/**
+ * 请求的上下文信息
+ */
 public class RequestContext implements AuthorizableRequestContext {
-    public final RequestHeader header;
-    public final String connectionId;
-    public final InetAddress clientAddress;
-    public final KafkaPrincipal principal;
-    public final ListenerName listenerName;
-    public final SecurityProtocol securityProtocol;
-    public final ClientInformation clientInformation;
+    public final RequestHeader header; // Request头部数据，主要是一些对用户不可见的元数据信息，如Request类型、Request API版本、clientId等
+    public final String connectionId; // Request发送方的TCP连接串标识，由Kafka根据一定规则定义，主要用于表示TCP连接
+    public final InetAddress clientAddress; // Request发送方IP地址
+    public final KafkaPrincipal principal;  // Kafka用户认证类，用于认证授权
+    public final ListenerName listenerName; // 监听器名称，可以是预定义的监听器（如PLAINTEXT），也可自行定义
+    public final SecurityProtocol securityProtocol; // 安全协议类型，目前支持4种：PLAINTEXT、SSL、SASL_PLAINTEXT、SASL_SSL
+    public final ClientInformation clientInformation; // 用户自定义的一些连接方信息
 
+    // 从给定的ByteBuffer中提取出Request和对应的Size值
     public RequestContext(RequestHeader header,
                           String connectionId,
                           InetAddress clientAddress,
@@ -57,6 +61,12 @@ public class RequestContext implements AuthorizableRequestContext {
         this.clientInformation = clientInformation;
     }
 
+    /**
+     * 从缓冲区中提取request对象
+     *
+     * @param buffer 缓冲区
+     * @return RequestAndSize
+     */
     public RequestAndSize parseRequest(ByteBuffer buffer) {
         if (isUnsupportedApiVersionsRequest()) {
             // Unsupported ApiVersion requests are treated as v0 requests and are not parsed

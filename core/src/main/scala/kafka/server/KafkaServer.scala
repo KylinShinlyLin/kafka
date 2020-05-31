@@ -1,19 +1,19 @@
 /**
- * Licensed to the Apache Software Foundation (ASF) under one or more
- * contributor license agreements.  See the NOTICE file distributed with
- * this work for additional information regarding copyright ownership.
- * The ASF licenses this file to You under the Apache License, Version 2.0
- * (the "License"); you may not use this file except in compliance with
- * the License.  You may obtain a copy of the License at
- *
- *    http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- */
+  * Licensed to the Apache Software Foundation (ASF) under one or more
+  * contributor license agreements.  See the NOTICE file distributed with
+  * this work for additional information regarding copyright ownership.
+  * The ASF licenses this file to You under the Apache License, Version 2.0
+  * (the "License"); you may not use this file except in compliance with
+  * the License.  You may obtain a copy of the License at
+  *
+  * http://www.apache.org/licenses/LICENSE-2.0
+  *
+  * Unless required by applicable law or agreed to in writing, software
+  * distributed under the License is distributed on an "AS IS" BASIS,
+  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+  * See the License for the specific language governing permissions and
+  * limitations under the License.
+  */
 
 package kafka.server
 
@@ -35,9 +35,8 @@ import kafka.network.SocketServer
 import kafka.security.CredentialProvider
 import kafka.utils._
 import kafka.zk.{BrokerInfo, KafkaZkClient}
-import org.apache.kafka.clients.{ApiVersions, ClientDnsLookup, ManualMetadataUpdater, NetworkClient, NetworkClientUtils}
+import org.apache.kafka.clients._
 import org.apache.kafka.common.internals.ClusterResourceListeners
-import org.apache.kafka.common.message.ControlledShutdownRequestData
 import org.apache.kafka.common.metrics.{JmxReporter, Metrics, _}
 import org.apache.kafka.common.network._
 import org.apache.kafka.common.protocol.Errors
@@ -118,9 +117,9 @@ object KafkaServer {
 }
 
 /**
- * Represents the lifecycle of a single Kafka broker. Handles all functionality required
- * to start up and shutdown a single Kafka node.
- */
+  * Represents the lifecycle of a single Kafka broker. Handles all functionality required
+  * to start up and shutdown a single Kafka node.
+  */
 class KafkaServer(val config: KafkaConfig, time: Time = Time.SYSTEM, threadNamePrefix: Option[String] = None,
                   kafkaMetricsReporters: Seq[KafkaMetricsReporter] = List()) extends Logging with KafkaMetricsGroup {
   private val startupComplete = new AtomicBoolean(false)
@@ -187,12 +186,12 @@ class KafkaServer(val config: KafkaConfig, time: Time = Time.SYSTEM, threadNameP
 
   newGauge("BrokerState", () => brokerState.currentState)
   newGauge("ClusterId", () => clusterId)
-  newGauge("yammer-metrics-count", () =>  KafkaYammerMetrics.defaultRegistry.allMetrics.size)
+  newGauge("yammer-metrics-count", () => KafkaYammerMetrics.defaultRegistry.allMetrics.size)
 
   /**
-   * Start up API for bringing up a single instance of the Kafka server.
-   * Instantiates the LogManager, the SocketServer and the request handlers - KafkaRequestHandlers
-   */
+    * Start up API for bringing up a single instance of the Kafka server.
+    * Instantiates the LogManager, the SocketServer and the request handlers - KafkaRequestHandlers
+    */
   def startup(): Unit = {
     try {
       info("starting")
@@ -221,7 +220,7 @@ class KafkaServer(val config: KafkaConfig, time: Time = Time.SYSTEM, threadNameP
         if (preloadedBrokerMetadataCheckpoint.clusterId.isDefined && preloadedBrokerMetadataCheckpoint.clusterId.get != clusterId)
           throw new InconsistentClusterIdException(
             s"The Cluster ID ${clusterId} doesn't match stored clusterId ${preloadedBrokerMetadataCheckpoint.clusterId} in meta.properties. " +
-            s"The broker is trying to join the wrong cluster. Configured zookeeper.connect may be wrong.")
+              s"The broker is trying to join the wrong cluster. Configured zookeeper.connect may be wrong.")
 
         /* generate brokerId */
         config.brokerId = getOrGenerateBrokerId(preloadedBrokerMetadataCheckpoint)
@@ -269,7 +268,9 @@ class KafkaServer(val config: KafkaConfig, time: Time = Time.SYSTEM, threadNameP
         // Create and start the socket server acceptor threads so that the bound port is known.
         // Delay starting processors until the end of the initialization sequence to ensure
         // that credentials have been loaded before processing authentications.
+        // 创建SocketServer组件
         socketServer = new SocketServer(config, metrics, time, credentialProvider)
+        // 启动SocketServer，但不启动Processor线程
         socketServer.startup(startupProcessors = false)
 
         /* start replica manager */
@@ -283,7 +284,7 @@ class KafkaServer(val config: KafkaConfig, time: Time = Time.SYSTEM, threadNameP
         checkpointBrokerMetadata(BrokerMetadata(config.brokerId, Some(clusterId)))
 
         /* start token manager */
-        tokenManager = new DelegationTokenManager(config, tokenCache, time , zkClient)
+        tokenManager = new DelegationTokenManager(config, tokenCache, time, zkClient)
         tokenManager.startup()
 
         /* start kafka controller */
@@ -340,14 +341,14 @@ class KafkaServer(val config: KafkaConfig, time: Time = Time.SYSTEM, threadNameP
 
         /* start dynamic config manager */
         dynamicConfigHandlers = Map[String, ConfigHandler](ConfigType.Topic -> new TopicConfigHandler(logManager, config, quotaManagers, kafkaController),
-                                                           ConfigType.Client -> new ClientIdConfigHandler(quotaManagers),
-                                                           ConfigType.User -> new UserConfigHandler(quotaManagers, credentialProvider),
-                                                           ConfigType.Broker -> new BrokerConfigHandler(config, quotaManagers))
+          ConfigType.Client -> new ClientIdConfigHandler(quotaManagers),
+          ConfigType.User -> new UserConfigHandler(quotaManagers, credentialProvider),
+          ConfigType.Broker -> new BrokerConfigHandler(config, quotaManagers))
 
         // Create the config manager. start listening to notifications
         dynamicConfigManager = new DynamicConfigManager(zkClient, dynamicConfigHandlers)
         dynamicConfigManager.startup()
-
+        // 启动Data plane和Control plane的所有线程
         socketServer.startControlPlaneProcessor(authorizerFutures)
         socketServer.startDataPlaneProcessors(authorizerFutures)
         brokerState.newState(RunningAsBroker)
@@ -442,8 +443,8 @@ class KafkaServer(val config: KafkaConfig, time: Time = Time.SYSTEM, threadNameP
   }
 
   /**
-   * Performs controlled shutdown
-   */
+    * Performs controlled shutdown
+    */
   private def controlledShutdown(): Unit = {
 
     def node(broker: Broker): Node = broker.node(config.interBrokerListenerName)
@@ -544,10 +545,10 @@ class KafkaServer(val config: KafkaConfig, time: Time = Time.SYSTEM, threadNameP
                 else 3
 
               val controlledShutdownRequest = new ControlledShutdownRequest.Builder(
-                  new ControlledShutdownRequestData()
-                    .setBrokerId(config.brokerId)
-                    .setBrokerEpoch(kafkaController.brokerEpoch),
-                    controlledShutdownApiVersion)
+                new ControlledShutdownRequestData()
+                  .setBrokerId(config.brokerId)
+                  .setBrokerEpoch(kafkaController.brokerEpoch),
+                controlledShutdownApiVersion)
               val request = networkClient.newClientRequest(node(prevController).idString, controlledShutdownRequest,
                 time.milliseconds(), true)
               val clientResponse = NetworkClientUtils.sendAndReceive(networkClient, request, time)
@@ -567,7 +568,7 @@ class KafkaServer(val config: KafkaConfig, time: Time = Time.SYSTEM, threadNameP
                 ioException = true
                 warn("Error during controlled shutdown, possibly because leader movement took longer than the " +
                   s"configured controller.socket.timeout.ms and/or request.timeout.ms: ${ioe.getMessage}")
-                // ignore and try again
+              // ignore and try again
             }
           }
           if (!shutdownSucceeded) {
@@ -598,9 +599,9 @@ class KafkaServer(val config: KafkaConfig, time: Time = Time.SYSTEM, threadNameP
   }
 
   /**
-   * Shutdown API for shutting down a single instance of the Kafka server.
-   * Shuts down the LogManager, the SocketServer and the log cleaner scheduler thread
-   */
+    * Shutdown API for shutting down a single instance of the Kafka server.
+    * Shuts down the LogManager, the SocketServer and the log cleaner scheduler thread
+    */
   def shutdown(): Unit = {
     try {
       info("shutting down")
@@ -690,8 +691,8 @@ class KafkaServer(val config: KafkaConfig, time: Time = Time.SYSTEM, threadNameP
   }
 
   /**
-   * After calling shutdown(), use this API to wait until the shutdown is complete
-   */
+    * After calling shutdown(), use this API to wait until the shutdown is complete
+    */
   def awaitShutdown(): Unit = shutdownLatch.await()
 
   def getLogManager(): LogManager = logManager
@@ -699,13 +700,13 @@ class KafkaServer(val config: KafkaConfig, time: Time = Time.SYSTEM, threadNameP
   def boundPort(listenerName: ListenerName): Int = socketServer.boundPort(listenerName)
 
   /**
-   * Reads the BrokerMetadata. If the BrokerMetadata doesn't match in all the log.dirs, InconsistentBrokerMetadataException is
-   * thrown.
-   *
-   * The log directories whose meta.properties can not be accessed due to IOException will be returned to the caller
-   *
-   * @return A 2-tuple containing the brokerMetadata and a sequence of offline log directories.
-   */
+    * Reads the BrokerMetadata. If the BrokerMetadata doesn't match in all the log.dirs, InconsistentBrokerMetadataException is
+    * thrown.
+    *
+    * The log directories whose meta.properties can not be accessed due to IOException will be returned to the caller
+    *
+    * @return A 2-tuple containing the brokerMetadata and a sequence of offline log directories.
+    */
   private def getBrokerMetadataAndOfflineDirs: (BrokerMetadata, Seq[String]) = {
     val brokerMetadataMap = mutable.HashMap[String, BrokerMetadata]()
     val brokerMetadataSet = mutable.HashSet[BrokerMetadata]()
@@ -733,7 +734,7 @@ class KafkaServer(val config: KafkaConfig, time: Time = Time.SYSTEM, threadNameP
 
       throw new InconsistentBrokerMetadataException(
         s"BrokerMetadata is not consistent across log.dirs. This could happen if multiple brokers shared a log directory (log.dirs) " +
-        s"or partial data was manually copied from another broker. Found:\n${builder.toString()}"
+          s"or partial data was manually copied from another broker. Found:\n${builder.toString()}"
       )
     } else if (brokerMetadataSet.size == 1)
       (brokerMetadataSet.last, offlineDirs)
@@ -743,10 +744,10 @@ class KafkaServer(val config: KafkaConfig, time: Time = Time.SYSTEM, threadNameP
 
 
   /**
-   * Checkpoint the BrokerMetadata to all the online log.dirs
-   *
-   * @param brokerMetadata
-   */
+    * Checkpoint the BrokerMetadata to all the online log.dirs
+    *
+    * @param brokerMetadata
+    */
   private def checkpointBrokerMetadata(brokerMetadata: BrokerMetadata) = {
     for (logDir <- config.logDirs if logManager.isLogDirOnline(new File(logDir).getAbsolutePath)) {
       val checkpoint = brokerMetadataCheckpoints(logDir)
@@ -755,23 +756,23 @@ class KafkaServer(val config: KafkaConfig, time: Time = Time.SYSTEM, threadNameP
   }
 
   /**
-   * Generates new brokerId if enabled or reads from meta.properties based on following conditions
-   * <ol>
-   * <li> config has no broker.id provided and broker id generation is enabled, generates a broker.id based on Zookeeper's sequence
-   * <li> config has broker.id and meta.properties contains broker.id if they don't match throws InconsistentBrokerIdException
-   * <li> config has broker.id and there is no meta.properties file, creates new meta.properties and stores broker.id
-   * <ol>
-   *
-   * @return The brokerId.
-   */
+    * Generates new brokerId if enabled or reads from meta.properties based on following conditions
+    * <ol>
+    * <li> config has no broker.id provided and broker id generation is enabled, generates a broker.id based on Zookeeper's sequence
+    * <li> config has broker.id and meta.properties contains broker.id if they don't match throws InconsistentBrokerIdException
+    * <li> config has broker.id and there is no meta.properties file, creates new meta.properties and stores broker.id
+    * <ol>
+    *
+    * @return The brokerId.
+    */
   private def getOrGenerateBrokerId(brokerMetadata: BrokerMetadata): Int = {
     val brokerId = config.brokerId
 
     if (brokerId >= 0 && brokerMetadata.brokerId >= 0 && brokerMetadata.brokerId != brokerId)
       throw new InconsistentBrokerIdException(
         s"Configured broker.id $brokerId doesn't match stored broker.id ${brokerMetadata.brokerId} in meta.properties. " +
-        s"If you moved your data, make sure your configured broker.id matches. " +
-        s"If you intend to create a new broker, you should remove all data in your data directories (log.dirs).")
+          s"If you moved your data, make sure your configured broker.id matches. " +
+          s"If you intend to create a new broker, you should remove all data in your data directories (log.dirs).")
     else if (brokerMetadata.brokerId < 0 && brokerId < 0 && config.brokerIdGenerationEnable) // generate a new brokerId from Zookeeper
       generateBrokerId
     else if (brokerMetadata.brokerId >= 0) // pick broker.id from meta.properties

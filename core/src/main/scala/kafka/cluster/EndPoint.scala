@@ -17,10 +17,10 @@
 
 package kafka.cluster
 
-import org.apache.kafka.common.{Endpoint => JEndpoint, KafkaException}
 import org.apache.kafka.common.network.ListenerName
 import org.apache.kafka.common.security.auth.SecurityProtocol
 import org.apache.kafka.common.utils.Utils
+import org.apache.kafka.common.{KafkaException, Endpoint => JEndpoint}
 
 import scala.collection.Map
 
@@ -32,14 +32,14 @@ object EndPoint {
     SecurityProtocol.values.map(sp => ListenerName.forSecurityProtocol(sp) -> sp).toMap
 
   /**
-   * Create EndPoint object from `connectionString` and optional `securityProtocolMap`. If the latter is not provided,
-   * we fallback to the default behaviour where listener names are the same as security protocols.
-   *
-   * @param connectionString the format is listener_name://host:port or listener_name://[ipv6 host]:port
-   *                         for example: PLAINTEXT://myhost:9092, CLIENT://myhost:9092 or REPLICATION://[::1]:9092
-   *                         Host can be empty (PLAINTEXT://:9092) in which case we'll bind to default interface
-   *                         Negative ports are also accepted, since they are used in some unit tests
-   */
+    * Create EndPoint object from `connectionString` and optional `securityProtocolMap`. If the latter is not provided,
+    * we fallback to the default behaviour where listener names are the same as security protocols.
+    *
+    * @param connectionString the format is listener_name://host:port or listener_name://[ipv6 host]:port
+    *                         for example: PLAINTEXT://myhost:9092, CLIENT://myhost:9092 or REPLICATION://[::1]:9092
+    *                         Host can be empty (PLAINTEXT://:9092) in which case we'll bind to default interface
+    *                         Negative ports are also accepted, since they are used in some unit tests
+    */
   def createEndPoint(connectionString: String, securityProtocolMap: Option[Map[ListenerName, SecurityProtocol]]): EndPoint = {
     val protocolMap = securityProtocolMap.getOrElse(DefaultSecurityProtocolMap)
 
@@ -59,19 +59,31 @@ object EndPoint {
   }
 }
 
+
 /**
- * Part of the broker definition - matching host/port pair to a protocol
- */
+  * Part of the broker definition - matching host/port pair to a protocol
+  *
+  * @param host             Broker 主机名
+  * @param port             Broker 端口号
+  * @param listenerName     监听器名字。目前预定义的名称包括 PLAINTEXT、SSL、SASL_PLAINTEXT 和 SASL_SSL。Kafka 允许你自定义其他监听器名称，比如 CONTROLLER、INTERNAL 等
+  * @param securityProtocol 监听器使用的安全协议。Kafka 支持 4 种安全协议，分别是 PLAINTEXT、SSL、SASL_PLAINTEXT 和 SASL_SSL
+  */
 case class EndPoint(host: String, port: Int, listenerName: ListenerName, securityProtocol: SecurityProtocol) {
+  // 构造完整的监听器连接字符串
+  // 格式为：监听器名称:
+  // 主机名：端口
+  // 比如：PLAINTEXT://kafka-host:9092
   def connectionString: String = {
     val hostport =
       if (host == null)
-        ":"+port
+        ":" + port
       else
         Utils.formatAddress(host, port)
     listenerName.value + "://" + hostport
   }
 
+  // clients工程下有一个Java版本的Endpoint类供clients端代码使用
+  // 此方法是构造Java版本的Endpoint类实例
   def toJava: JEndpoint = {
     new JEndpoint(listenerName.value, securityProtocol, host, port)
   }
