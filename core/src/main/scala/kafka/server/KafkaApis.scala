@@ -1388,9 +1388,11 @@ class KafkaApis(val requestChannel: RequestChannel,
   }
 
   def handleListGroupsRequest(request: RequestChannel.Request): Unit = {
-    val (error, groups) = groupCoordinator.handleListGroups()
+    val (error, groups) = groupCoordinator.handleListGroups() // 调用GroupCoordinator的handleListGroups方法拿到所有Group信息
+    // 如果Clients具备CLUSTER资源的DESCRIBE权限
     if (authorize(request, DESCRIBE, CLUSTER, CLUSTER_NAME))
     // With describe cluster access all groups are returned. We keep this alternative for backward compatibility.
+    // 直接使用刚才拿到的Group数据封装进Response然后发送
       sendResponseMaybeThrottle(request, requestThrottleMs =>
         new ListGroupsResponse(new ListGroupsResponseData()
           .setErrorCode(error.code)
@@ -1403,6 +1405,7 @@ class KafkaApis(val requestChannel: RequestChannel,
           .setThrottleTimeMs(requestThrottleMs)
         ))
     else {
+      // 找出Clients对哪些Group有GROUP资源的DESCRIBE权限，返回这些Group信息
       val filteredGroups = groups.filter(group => authorize(request, DESCRIBE, GROUP, group.groupId))
       sendResponseMaybeThrottle(request, requestThrottleMs =>
         new ListGroupsResponse(new ListGroupsResponseData()
@@ -2885,6 +2888,19 @@ class KafkaApis(val requestChannel: RequestChannel,
     }
   }
 
+  /**
+    *
+    * 请求处理的鉴权
+    *
+    * @param request
+    * @param operation
+    * @param resourceType
+    * @param resourceName
+    * @param logIfAllowed
+    * @param logIfDenied
+    * @param refCount
+    * @return
+    */
   private def authorize(request: RequestChannel.Request,
                         operation: AclOperation,
                         resourceType: ResourceType,
@@ -2893,8 +2909,11 @@ class KafkaApis(val requestChannel: RequestChannel,
                         logIfDenied: Boolean = true,
                         refCount: Int = 1): Boolean = {
     authorizer.forall { authZ =>
+      // 获取待鉴权的资源类型
+      // 常见的资源类型如TOPIC、GROUP、CLUSTER等
       val resource = new ResourcePattern(resourceType, resourceName, PatternType.LITERAL)
       val actions = Collections.singletonList(new Action(operation, resource, refCount, logIfAllowed, logIfDenied))
+      // 返回鉴权结果，是ALLOWED还是DENIED
       authZ.authorize(request.context, actions).asScala.head == AuthorizationResult.ALLOWED
     }
   }
@@ -2978,6 +2997,13 @@ class KafkaApis(val requestChannel: RequestChannel,
 
   // Throttle the channel if the request quota is enabled but has been violated. Regardless of throttling, send the
   // response immediately.
+  /**
+    * 发送普通 Response 但接受限流的约束。
+    *
+    * @param request
+    * @param createResponse
+    * @param onComplete
+    */
   private def sendResponseMaybeThrottle(request: RequestChannel.Request,
                                         createResponse: Int => AbstractResponse,
                                         onComplete: Option[Send => Unit] = None): Unit = {
@@ -2986,12 +3012,26 @@ class KafkaApis(val requestChannel: RequestChannel,
     sendResponse(request, Some(createResponse(throttleTimeMs)), onComplete)
   }
 
+  /**
+    *
+    * 发送携带错误信息的 Response 但接受限流的约束。
+    *
+    * @param request
+    * @param error
+    */
   private def sendErrorResponseMaybeThrottle(request: RequestChannel.Request, error: Throwable): Unit = {
     val throttleTimeMs = quotas.request.maybeRecordAndGetThrottleTimeMs(request)
     quotas.request.throttle(request, throttleTimeMs, sendResponse)
     sendErrorOrCloseConnection(request, error, throttleTimeMs)
   }
 
+  /**
+    * 发送普通 Response 而不受限流限制。
+    *
+    * @param request
+    * @param response
+    * @param onComplete
+    */
   private def sendResponseExemptThrottle(request: RequestChannel.Request,
                                          response: AbstractResponse,
                                          onComplete: Option[Send => Unit] = None): Unit = {
@@ -2999,6 +3039,12 @@ class KafkaApis(val requestChannel: RequestChannel,
     sendResponse(request, Some(response), onComplete)
   }
 
+  /**
+    * 发送携带错误信息的 Response 而不受限流限制。
+    *
+    * @param request
+    * @param error
+    */
   private def sendErrorResponseExemptThrottle(request: RequestChannel.Request, error: Throwable): Unit = {
     quotas.request.maybeRecordExempt(request)
     sendErrorOrCloseConnection(request, error, 0)
@@ -3013,6 +3059,12 @@ class KafkaApis(val requestChannel: RequestChannel,
       sendResponse(request, Some(response), None)
   }
 
+  /**
+    * 发送 NoOpResponse 类型的 Response 而不受请求通道上限流（throttling）的限制。
+    * 所谓的 NoOpResponse，是指 Processor 线程取出该类型的 Response 后，不执行真正的 I/O 发送操作
+    *
+    * @param request
+    */
   private def sendNoOpResponseExemptThrottle(request: RequestChannel.Request): Unit = {
     quotas.request.maybeRecordExempt(request)
     sendResponse(request, None, None)
@@ -3025,6 +3077,14 @@ class KafkaApis(val requestChannel: RequestChannel,
     requestChannel.sendResponse(new RequestChannel.CloseConnectionResponse(request))
   }
 
+  /**
+    * 该方法接收的实际上是 Request，而非 Response，因此，
+    * 它会在内部构造出 Response 对象之后，再调用 sendResponse 方法
+    *
+    * @param request
+    * @param responseOpt
+    * @param onComplete
+    */
   private def sendResponse(request: RequestChannel.Request,
                            responseOpt: Option[AbstractResponse],
                            onComplete: Option[Send => Unit]): Unit = {
@@ -3044,6 +3104,13 @@ class KafkaApis(val requestChannel: RequestChannel,
     sendResponse(response)
   }
 
+  /**
+    * 最底层的 Response 发送方法。本质上，它调用了 SocketServer 组件中 RequestChannel 的 sendResponse 方法，
+    * 我在前面的课程中讲到过，RequestChannel 的 sendResponse 方法会把待发送的 Response 对象添加到对应
+    * Processor 线程的 Response 队列上，然后交由 Processor 线程完成网络间的数据传输
+    *
+    * @param response
+    */
   private def sendResponse(response: RequestChannel.Response): Unit = {
     requestChannel.sendResponse(response)
   }
