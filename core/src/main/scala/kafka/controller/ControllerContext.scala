@@ -1,19 +1,19 @@
 /**
- * Licensed to the Apache Software Foundation (ASF) under one or more
- * contributor license agreements.  See the NOTICE file distributed with
- * this work for additional information regarding copyright ownership.
- * The ASF licenses this file to You under the Apache License, Version 2.0
- * (the "License"); you may not use this file except in compliance with
- * the License.  You may obtain a copy of the License at
- *
- *    http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- */
+  * Licensed to the Apache Software Foundation (ASF) under one or more
+  * contributor license agreements.  See the NOTICE file distributed with
+  * this work for additional information regarding copyright ownership.
+  * The ASF licenses this file to You under the Apache License, Version 2.0
+  * (the "License"); you may not use this file except in compliance with
+  * the License.  You may obtain a copy of the License at
+  *
+  * http://www.apache.org/licenses/LICENSE-2.0
+  *
+  * Unless required by applicable law or agreed to in writing, software
+  * distributed under the License is distributed on an "AS IS" BASIS,
+  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+  * See the License for the specific language governing permissions and
+  * limitations under the License.
+  */
 
 package kafka.controller
 
@@ -32,14 +32,14 @@ object ReplicaAssignment {
 
 
 /**
- * @param replicas the sequence of brokers assigned to the partition. It includes the set of brokers
- *                 that were added (`addingReplicas`) and removed (`removingReplicas`).
- * @param addingReplicas the replicas that are being added if there is a pending reassignment
- * @param removingReplicas the replicas that are being removed if there is a pending reassignment
- */
-case class ReplicaAssignment private (replicas: Seq[Int],
-                                      addingReplicas: Seq[Int],
-                                      removingReplicas: Seq[Int]) {
+  * @param replicas         the sequence of brokers assigned to the partition. It includes the set of brokers
+  *                         that were added (`addingReplicas`) and removed (`removingReplicas`).
+  * @param addingReplicas   the replicas that are being added if there is a pending reassignment
+  * @param removingReplicas the replicas that are being removed if there is a pending reassignment
+  */
+case class ReplicaAssignment private(replicas: Seq[Int],
+                                     addingReplicas: Seq[Int],
+                                     removingReplicas: Seq[Int]) {
 
   lazy val originReplicas: Seq[Int] = replicas.diff(addingReplicas)
   lazy val targetReplicas: Seq[Int] = replicas.diff(removingReplicas)
@@ -71,46 +71,47 @@ case class ReplicaAssignment private (replicas: Seq[Int],
     s"removingReplicas=${removingReplicas.mkString(",")})"
 }
 
+
 class ControllerContext {
-  val stats = new ControllerStats
-  var offlinePartitionCount = 0
-  var shuttingDownBrokerIds: mutable.Set[Int] = mutable.Set.empty
-  private var liveBrokers: Set[Broker] = Set.empty
-  private var liveBrokerEpochs: Map[Int, Long] = Map.empty
-  var epoch: Int = KafkaController.InitialControllerEpoch
-  var epochZkVersion: Int = KafkaController.InitialControllerEpochZkVersion
+  val stats = new ControllerStats // Controller统计信息类
+  var offlinePartitionCount = 0 // 离线分区计数器
+  var shuttingDownBrokerIds: mutable.Set[Int] = mutable.Set.empty // 关闭中Broker的Id列表
+  private var liveBrokers: Set[Broker] = Set.empty // 当前运行中Broker对象列表 。每个 Broker 对象就是一个 <Id，EndPoint，机架信息 > 的三元组
+  private var liveBrokerEpochs: Map[Int, Long] = Map.empty // 运行中Broker Epoch列表
+  var epoch: Int = KafkaController.InitialControllerEpoch // Controller当前Epoch值
+  var epochZkVersion: Int = KafkaController.InitialControllerEpochZkVersion // Controller对应ZooKeeper节点的Epoch值
 
-  var allTopics: Set[String] = Set.empty
-  val partitionAssignments = mutable.Map.empty[String, mutable.Map[Int, ReplicaAssignment]]
-  val partitionLeadershipInfo = mutable.Map.empty[TopicPartition, LeaderIsrAndControllerEpoch]
-  val partitionsBeingReassigned = mutable.Set.empty[TopicPartition]
-  val partitionStates = mutable.Map.empty[TopicPartition, PartitionState]
-  val replicaStates = mutable.Map.empty[PartitionAndReplica, ReplicaState]
-  val replicasOnOfflineDirs: mutable.Map[Int, Set[TopicPartition]] = mutable.Map.empty
+  var allTopics: Set[String] = Set.empty // 集群主题列表
+  val partitionAssignments = mutable.Map.empty[String, mutable.Map[Int, ReplicaAssignment]] // 主题分区的副本列表
+  val partitionLeadershipInfo = mutable.Map.empty[TopicPartition, LeaderIsrAndControllerEpoch] // 主题分区的Leader/ISR副本信息
+  val partitionsBeingReassigned = mutable.Set.empty[TopicPartition] // 正处于副本重分配过程的主题分区列表
+  val partitionStates = mutable.Map.empty[TopicPartition, PartitionState] // 主题分区状态列表
+  val replicaStates = mutable.Map.empty[PartitionAndReplica, ReplicaState] // 主题分区的副本状态列表
+  val replicasOnOfflineDirs: mutable.Map[Int, Set[TopicPartition]] = mutable.Map.empty // 不可用磁盘路径上的副本列表
 
-  val topicsToBeDeleted = mutable.Set.empty[String]
+  val topicsToBeDeleted = mutable.Set.empty[String] // 待删除主题列表
 
   /** The following topicsWithDeletionStarted variable is used to properly update the offlinePartitionCount metric.
-   * When a topic is going through deletion, we don't want to keep track of its partition state
-   * changes in the offlinePartitionCount metric. This goal means if some partitions of a topic are already
-   * in OfflinePartition state when deletion starts, we need to change the corresponding partition
-   * states to NonExistentPartition first before starting the deletion.
-   *
-   * However we can NOT change partition states to NonExistentPartition at the time of enqueuing topics
-   * for deletion. The reason is that when a topic is enqueued for deletion, it may be ineligible for
-   * deletion due to ongoing partition reassignments. Hence there might be a delay between enqueuing
-   * a topic for deletion and the actual start of deletion. In this delayed interval, partitions may still
-   * transition to or out of the OfflinePartition state.
-   *
-   * Hence we decide to change partition states to NonExistentPartition only when the actual deletion have started.
-   * For topics whose deletion have actually started, we keep track of them in the following topicsWithDeletionStarted
-   * variable. And once a topic is in the topicsWithDeletionStarted set, we are sure there will no longer
-   * be partition reassignments to any of its partitions, and only then it's safe to move its partitions to
-   * NonExistentPartition state. Once a topic is in the topicsWithDeletionStarted set, we will stop monitoring
-   * its partition state changes in the offlinePartitionCount metric
-   */
-  val topicsWithDeletionStarted = mutable.Set.empty[String]
-  val topicsIneligibleForDeletion = mutable.Set.empty[String]
+    * When a topic is going through deletion, we don't want to keep track of its partition state
+    * changes in the offlinePartitionCount metric. This goal means if some partitions of a topic are already
+    * in OfflinePartition state when deletion starts, we need to change the corresponding partition
+    * states to NonExistentPartition first before starting the deletion.
+    *
+    * However we can NOT change partition states to NonExistentPartition at the time of enqueuing topics
+    * for deletion. The reason is that when a topic is enqueued for deletion, it may be ineligible for
+    * deletion due to ongoing partition reassignments. Hence there might be a delay between enqueuing
+    * a topic for deletion and the actual start of deletion. In this delayed interval, partitions may still
+    * transition to or out of the OfflinePartition state.
+    *
+    * Hence we decide to change partition states to NonExistentPartition only when the actual deletion have started.
+    * For topics whose deletion have actually started, we keep track of them in the following topicsWithDeletionStarted
+    * variable. And once a topic is in the topicsWithDeletionStarted set, we are sure there will no longer
+    * be partition reassignments to any of its partitions, and only then it's safe to move its partitions to
+    * NonExistentPartition state. Once a topic is in the topicsWithDeletionStarted set, we will stop monitoring
+    * its partition state changes in the offlinePartitionCount metric
+    */
+  val topicsWithDeletionStarted = mutable.Set.empty[String] // 已开启删除的主题列表
+  val topicsIneligibleForDeletion = mutable.Set.empty[String] // 暂时无法执行删除的主题列表
 
   private def clearTopicsState(): Unit = {
     allTopics = Set.empty
@@ -126,9 +127,9 @@ class ControllerContext {
   def partitionReplicaAssignment(topicPartition: TopicPartition): Seq[Int] = {
     partitionAssignments.getOrElse(topicPartition.topic, mutable.Map.empty)
       .get(topicPartition.partition) match {
-        case Some(partitionAssignment) => partitionAssignment.replicas
-        case None => Seq.empty
-      }
+      case Some(partitionAssignment) => partitionAssignment.replicas
+      case None => Seq.empty
+    }
   }
 
   def partitionFullReplicaAssignment(topicPartition: TopicPartition): ReplicaAssignment = {
@@ -141,13 +142,13 @@ class ControllerContext {
     assignments.put(topicPartition.partition, newAssignment)
   }
 
-  def partitionReplicaAssignmentForTopic(topic : String): Map[TopicPartition, Seq[Int]] = {
+  def partitionReplicaAssignmentForTopic(topic: String): Map[TopicPartition, Seq[Int]] = {
     partitionAssignments.getOrElse(topic, Map.empty).map {
       case (partition, assignment) => (new TopicPartition(topic, partition), assignment.replicas)
     }.toMap
   }
 
-  def partitionFullReplicaAssignmentForTopic(topic : String): Map[TopicPartition, ReplicaAssignment] = {
+  def partitionFullReplicaAssignmentForTopic(topic: String): Map[TopicPartition, ReplicaAssignment] = {
     partitionAssignments.getOrElse(topic, Map.empty).map {
       case (partition, assignment) => (new TopicPartition(topic, partition), assignment)
     }.toMap
@@ -164,13 +165,13 @@ class ControllerContext {
   def setLiveBrokerAndEpochs(brokerAndEpochs: Map[Broker, Long]): Unit = {
     liveBrokers = brokerAndEpochs.keySet
     liveBrokerEpochs =
-      brokerAndEpochs map { case (broker, brokerEpoch) => (broker.id, brokerEpoch)}
+      brokerAndEpochs map { case (broker, brokerEpoch) => (broker.id, brokerEpoch) }
   }
 
   def addLiveBrokersAndEpochs(brokerAndEpochs: Map[Broker, Long]): Unit = {
     liveBrokers = liveBrokers ++ brokerAndEpochs.keySet
     liveBrokerEpochs = liveBrokerEpochs ++
-      (brokerAndEpochs map { case (broker, brokerEpoch) => (broker.id, brokerEpoch)})
+      (brokerAndEpochs map { case (broker, brokerEpoch) => (broker.id, brokerEpoch) })
   }
 
   def removeLiveBrokers(brokerIds: Set[Int]): Unit = {
@@ -178,6 +179,13 @@ class ControllerContext {
     liveBrokerEpochs = liveBrokerEpochs.filter { case (id, _) => !brokerIds.contains(id) }
   }
 
+  /**
+    * 每当新增或移除已有 Broker 时，ZooKeeper 就会更新其保存的 Broker 数据，
+    * 从而引发 Controller 修改元数据，也就是会调用 updateBrokerMetadata 方法来增减 Broker 列表中的对象
+    *
+    * @param oldMetadata
+    * @param newMetadata
+    */
   def updateBrokerMetadata(oldMetadata: Broker, newMetadata: Broker): Unit = {
     liveBrokers -= oldMetadata
     liveBrokers += newMetadata
@@ -185,9 +193,13 @@ class ControllerContext {
 
   // getter
   def liveBrokerIds: Set[Int] = liveBrokerEpochs.keySet -- shuttingDownBrokerIds
+
   def liveOrShuttingDownBrokerIds: Set[Int] = liveBrokerEpochs.keySet
+
   def liveOrShuttingDownBrokers: Set[Broker] = liveBrokers
+
   def liveBrokerIdAndEpochs: Map[Int, Long] = liveBrokerEpochs
+
   def liveOrShuttingDownBroker(brokerId: Int): Option[Broker] = liveOrShuttingDownBrokers.find(_.id == brokerId)
 
   def partitionsOnBroker(brokerId: Int): Set[TopicPartition] = {
@@ -343,12 +355,26 @@ class ControllerContext {
     updatePartitionStateMetrics(partition, currentState, targetState)
   }
 
+  /**
+    * 方法根据给定主题分区的当前状态和目标状态，来判断该分区是否是离线状态的分区。
+    * 如果是，则累加 offlinePartitionCount 字段的值，否则递减该值
+    *
+    * @param partition
+    * @param currentState
+    * @param targetState
+    */
   private def updatePartitionStateMetrics(partition: TopicPartition,
                                           currentState: PartitionState,
                                           targetState: PartitionState): Unit = {
+    // 如果该主题当前并未处于删除中状态
     if (!isTopicDeletionInProgress(partition.topic)) {
+      // targetState表示该分区要变更到的状态
+      // 如果当前状态不是OfflinePartition，即离线状态并且目标状态是离线状态
+      // 这个if语句判断是否要将该主题分区状态转换到离线状态
       if (currentState != OfflinePartition && targetState == OfflinePartition) {
         offlinePartitionCount = offlinePartitionCount + 1
+        // 如果当前状态已经是离线状态，但targetState不是
+        // 这个else if语句判断是否要将该主题分区状态转换到非离线状态
       } else if (currentState == OfflinePartition && targetState != OfflinePartition) {
         offlinePartitionCount = offlinePartitionCount - 1
       }
